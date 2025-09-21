@@ -9,8 +9,7 @@ import subprocess
 
 def video_scene_split(
     video_url: str, 
-    threshold: float = 30.0, 
-    min_scene_length: int = 2,
+    min_scene_length: float = 2,
     timeout: int = 180) -> list:
     """
     视频场景分割
@@ -40,7 +39,6 @@ def video_scene_split(
         'scenedetect',
         '-i', video_file,
         'detect-content',
-        '-t', str(threshold),
         '-m', str(min_scene_length),
         'split-video',
         '-o', config.VIDEO_OUTPUT_DIR,
