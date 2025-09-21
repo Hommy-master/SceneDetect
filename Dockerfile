@@ -46,8 +46,5 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HOME="/root" \
     UV_CACHE_DIR="/root/.cache/uv"
 
-# 验证安装
-RUN scenedetect --version
-
 # 启动命令
 CMD ["uv", "run", "main.py", "--workers", "4"]
