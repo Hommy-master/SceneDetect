@@ -47,8 +47,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_CACHE_DIR="/root/.cache/uv"
 
 # 验证安装
-RUN scenedetect --version && \
-    python -c "import cv2; print(f'OpenCV version: {cv2.__version__}')"
+RUN scenedetect --version &&
 
 # 启动命令
 CMD ["uv", "run", "main.py", "--workers", "4"]
