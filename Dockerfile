@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 # 安装系统依赖（scenedetect 需要 OpenCV 的图形库）
 RUN apt-get update && apt-get install -y \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
@@ -45,6 +45,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:/app/bin:$PATH" \
     HOME="/root" \
     UV_CACHE_DIR="/root/.cache/uv"
+
+# 验证安装
+RUN scenedetect --version && \
+    python -c "import cv2; print(f'OpenCV version: {cv2.__version__}')"
 
 # 启动命令
 CMD ["uv", "run", "main.py", "--workers", "4"]
