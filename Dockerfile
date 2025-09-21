@@ -21,6 +21,9 @@ RUN uv sync --no-dev --no-cache
 # 安装 scenedetect
 RUN uv pip install scenedetect
 
+# 安装opencv-python
+RUN uv pip install opencv-python
+
 # 清理缓存
 RUN uv cache prune
 
