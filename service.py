@@ -43,7 +43,8 @@ def video_scene_split(
         '-t', str(threshold),
         '-m', str(min_scene_length),
         'split-video',
-        '-o', config.VIDEO_OUTPUT_DIR
+        '-o', config.VIDEO_OUTPUT_DIR,
+        '-q'
     ]
     
     # 4. 执行命令

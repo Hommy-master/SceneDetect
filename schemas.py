@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field
 class VideoSceneSplitRequest(BaseModel):
     """视频场景分割请求参数"""
     video_url: str = Field(default="", description="视频文件URL")
+    threshold: float = Field(default=30.0, description="场景切换阈值，值越小越灵敏")
+    min_scene_length: int = Field(default=2, description="最小场景长度，单位：秒")
 
 class VideoSceneSplitResponse(BaseModel):
     """视频场景分割响应参数"""

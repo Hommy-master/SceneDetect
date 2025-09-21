@@ -14,6 +14,8 @@ def video_scene_split(video: schemas.VideoSceneSplitRequest):
     # 调用service层处理业务逻辑
     scene_list = service.video_scene_split(
         video_url=video.video_url,
+        threshold=video.threshold,
+        min_scene_length=video.min_scene_length,
     )
 
     return schemas.VideoSceneSplitResponse(scene_list=scene_list)
