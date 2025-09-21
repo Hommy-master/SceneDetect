@@ -16,7 +16,13 @@ RUN mkdir -p /root/.cache/uv
 COPY dist/ .
 
 # 安装依赖（仍使用root用户确保权限）
-RUN uv sync --no-dev --no-cache && uv cache prune
+RUN uv sync --no-dev --no-cache
+
+# 安装 scenedetect
+RUN uv pip install scenedetect
+
+# 清理缓存
+RUN uv cache prune
 
 # 暴露应用端口
 EXPOSE 60000

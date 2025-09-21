@@ -9,7 +9,7 @@ class CustomError(Enum):
     PARAM_VALIDATION_FAILED = (1001, "参数校验失败", "Parameter validation failed")
     
     # ===== 业务错误码 (2000-2999) =====
-    RECOGNIZE_AUDIO_FAILED = (2001, "识别音频失败", "Failed to recognize audio")
+    VIDEO_SCENE_SPLIT_FAILED = (2001, "视频场景分割失败", "Failed to video scene split")
     FILE_SIZE_LIMIT_EXCEEDED = (2002, "文件大小超出限制", "File size exceeds the limit")
     DOWNLOAD_FILE_FAILED = (2003, "下载文件失败", "Download file failed")
 

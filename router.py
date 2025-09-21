@@ -6,47 +6,21 @@ import service
 
 router = APIRouter(prefix="/v1", tags=["v1"])
 
-@router.post("/asr/text", response_model=schemas.AsrTextResponse)
-def asr_text(asr: schemas.AsrTextRequest):
+@router.post("/video/scene-split", response_model=schemas.VideoSceneSplitResponse)
+def video_scene_split(video: schemas.VideoSceneSplitRequest):
     """
-    语音 -> 纯文本
+    视频场景分割
     """
     
     # 调用service层处理业务逻辑
-    text = service.asr_text(
-        audio_url=asr.audio_url,
+    scene_list = service.video_scene_split(
+        video_url=video.video_url,
     )
 
-    return schemas.AsrTextResponse(text=text)
-
-@router.post("/asr/srt", response_model=schemas.AsrSrtResponse)
-def asr_srt(asr: schemas.AsrSrtRequest):
-    """
-    语音 -> 字幕
-    """
-
-    srt_url = service.asr_srt(
-        audio_url=asr.audio_url,
-    )
-
-    logger.info(f"generate srt: {srt_url}")
-    return schemas.AsrSrtResponse(srt_url=srt_url)
-
-@router.post("/asr/embed", response_model=schemas.AsrEmbedResponse)
-def asr_embed(request: Request, asr: schemas.AsrEmbedRequest):
-    """
-    视频（提取语音，识别字幕） -> 嵌入字幕
-    """
-
-    # 调用service层处理业务逻辑
-    embed_url = service.asr_embed(
-        video_url=asr.video_url,
-    )
-
-    return schemas.AsrEmbedResponse(video_url=embed_url)
+    return schemas.VideoSceneSplitResponse(scene_list=scene_list)
 
 # 健康检查端点
 @router.get("/health", summary="健康检查")
 def health_check():
     """检查服务是否正常运行"""
-    return {"code": 0, "message": "AutoSubRT Service is running"}
+    return {"code": 0, "message": "VideoDetect Service is running"}

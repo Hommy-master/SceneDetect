@@ -19,7 +19,6 @@ class PrepareMiddleware(BaseHTTPMiddleware):
         # 递归创建目录，如果目录存在，就直接跳过创建
         os.makedirs(config.TEMP_DIR, exist_ok=True)
         os.makedirs(config.VIDEO_OUTPUT_DIR, exist_ok=True)
-        os.makedirs(config.SRT_OUTPUT_DIR, exist_ok=True)
 
         # 继续处理请求
         response = await call_next(request)

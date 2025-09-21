@@ -1,28 +1,10 @@
 from fastapi import FastAPI
-from contextlib import asynccontextmanager
 import router
-import service
 import middlewares
 from logger import logger
 
-
-# 1. 加载模型
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # ---------------- 启动 ----------------
-    # await create_db_pool()
-    # await start_redis()
-    logger.info("✅ app start")
-    # 在应用启动时加载模型
-    service.load_model()
-    yield
-    # ---------------- 关闭 ----------------
-    # await close_db_pool()
-    # await stop_redis()
-    logger.info("❌ app shutdown")
-
 # 2. 创建FastAPI应用
-app = FastAPI(title="AutoSubRT API", description="语音转SRT字幕服务", lifespan=lifespan)
+app = FastAPI(title="AutoSubRT API", description="语音转SRT字幕服务")
 
 # 3. 注册路由
 app.include_router(router.router, prefix="/openapi", tags=["AutoSubRT"])
