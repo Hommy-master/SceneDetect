@@ -1,5 +1,4 @@
-from fastapi import APIRouter, Request
-from logger import logger
+from fastapi import APIRouter
 import schemas
 import service
 

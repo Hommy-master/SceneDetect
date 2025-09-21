@@ -7,6 +7,7 @@ class CustomError(Enum):
     # ===== 基础错误码 (1000-1999) =====
     SUCCESS = (0, "成功", "Success")
     PARAM_VALIDATION_FAILED = (1001, "参数校验失败", "Parameter validation failed")
+    VIDEO_SCENE_SPLIT_TIMEOUT = (1002, "视频场景分割超时", "Video scene split timeout")
     
     # ===== 业务错误码 (2000-2999) =====
     VIDEO_SCENE_SPLIT_FAILED = (2001, "视频场景分割失败", "Failed to video scene split")
