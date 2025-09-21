@@ -1,5 +1,14 @@
 FROM python:3.11-slim
 
+# 安装系统依赖（scenedetect 需要 OpenCV 的图形库）
+RUN apt-get update && apt-get install -y \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # 使用pip安装uv
 RUN pip install --no-cache-dir uv
 
