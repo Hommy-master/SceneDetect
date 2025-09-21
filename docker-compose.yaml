@@ -1,6 +1,6 @@
 services:
-  SceneDetect:
-    image: gogoshine/SceneDetect:latest
+  scenedetect:
+    image: gogoshine/scenedetect:latest
     ports:
       - "60001:60000"  # 将主机的 60001 端口映射到容器内部的 60000 端口
     volumes:
@@ -15,5 +15,5 @@ services:
     cpus: '3.5'       # CPU使用率限制为150%，即容器最多可以使用1.5个完整的CPU核心
     oom_score_adj: -500  # 调整 OOM 杀手优先级
     restart: unless-stopped  # 除非手动停止，否则总是重启容器
-    container_name: SceneDetect # 这里指容器名称，非必需，不指定时，名称为：<项目名称>-<服务名称>-<序号>
+    container_name: scenedetect # 这里指容器名称，非必需，不指定时，名称为：<项目名称>-<服务名称>-<序号>
     #entrypoint: ["/bin/sh", "-c", "sleep 10000"]
