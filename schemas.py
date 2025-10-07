@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field, HttpUrl
 
 class VideoSceneSplitRequest(BaseModel):
     """视频场景分割请求参数"""
+    api_key: str = Field(description="API Key")
     video_url: HttpUrl = Field(description="视频文件URL")
     min_scene_length: float = Field(default=2, description="最小场景长度，单位：秒")
 

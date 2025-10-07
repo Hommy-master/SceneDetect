@@ -6,8 +6,11 @@ import config
 import os
 import subprocess
 
+# 定义常量
+PRICE: float = 0.01
 
 def video_scene_split(
+    api_key: str,
     video_url: str, 
     min_scene_length: float = 2,
     timeout: int = 180) -> list:
@@ -26,15 +29,27 @@ def video_scene_split(
     Raises:
         CustomException: 自定义异常
     """
-    # 1. 下载视频文件
+    # 1. 验证api_key
+    #pt = helper.get_user_points(api_key)
+
+    # 2. 下载视频文件
     video_file = helper.download(video_url, config.TEMP_DIR)
 
-    # 2. 获取文件名称
+    # 3. 获取视频时长
+    #duration = helper.get_video_duration(video_file)
+    #price = duration * PRICE
+    #if pt < price:
+    #    logger.warning(f"Insufficient points, video_url: {video_url}, price: {price}, total points: {pt}")
+    #    raise CustomException(err=CustomError.INSUFFICIENT_ACCOUNT_BALANCE)
+    #else:
+    #    logger.info(f"video_url: {video_url}, price: {price}, total points: {pt}")
+
+    # 4. 获取文件名称
     video_name = os.path.basename(video_file)
     base_name = os.path.splitext(video_name)[0]
     logger.info(f"video_file: {video_file}, base_name: {base_name}")
 
-    # 3. 构建命令参数
+    # 5. 构建命令参数
     command = [
         'scenedetect',
         '-i', video_file,
@@ -45,7 +60,7 @@ def video_scene_split(
         '-q'
     ]
     
-    # 4. 执行命令
+    # 6. 执行命令
     try:
         # 执行场景检测和视频分割命令
         result = subprocess.run(
@@ -67,6 +82,9 @@ def video_scene_split(
         
         # 按场景编号排序（更符合直观顺序）
         output_files.sort()
+
+        # 消减用户的帐户余额
+        # helper.deduct_user_points(api_key, price, '调用按镜头切分视频')
         
         return gen_download_urls(output_files)
     except subprocess.TimeoutExpired:

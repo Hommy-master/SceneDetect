@@ -13,6 +13,8 @@ class CustomError(Enum):
     VIDEO_SCENE_SPLIT_FAILED = (2001, "视频场景分割失败", "Failed to video scene split")
     FILE_SIZE_LIMIT_EXCEEDED = (2002, "文件大小超出限制", "File size exceeds the limit")
     DOWNLOAD_FILE_FAILED = (2003, "下载文件失败", "Download file failed")
+    INSUFFICIENT_ACCOUNT_BALANCE = (2004, "帐户余额不足，请充值", "Insufficient account balance, please recharge")
+    INVALID_APIKEY = (2005, "无效的API密钥", "Invalid API key")
 
     # ===== 系统错误码 (9000-9999) =====
     INTERNAL_SERVER_ERROR = (9998, "系统内部错误", "Internal server error")
@@ -23,7 +25,7 @@ class CustomError(Enum):
         self.cn_message = cn_message
         self.en_message = en_message
 
-    def as_dict(self, detail: str = None, lang: str = 'zh') -> dict:
+    def as_dict(self, detail: str = "", lang: str = 'zh') -> dict:
         """转换为API响应格式，支持中英文"""
         message = self.cn_message if lang == 'zh' else self.en_message
         if detail:
@@ -34,7 +36,7 @@ class CustomError(Enum):
 # 自定义异常类
 class CustomException(Exception):
     """自定义业务异常类"""
-    def __init__(self, err: CustomError, detail: str = None):
+    def __init__(self, err: CustomError, detail: str = ""):
         self.err = err
         self.detail = detail
         super().__init__(err.cn_message)
