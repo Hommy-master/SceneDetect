@@ -20,8 +20,8 @@ jobs:
           # 复制源代码
           cp *.py dist/
           # 复制工具
-          cp tools/ffmpeg/ffmpeg dist/bin/ffmpeg
-          chmod +x dist/bin/ffmpeg
+          cp tools/ffmpeg/* dist/bin/
+          chmod +x dist/bin/*
           # 复制依赖配置文件
           cp pyproject.toml dist/          
           cp uv.lock dist/
