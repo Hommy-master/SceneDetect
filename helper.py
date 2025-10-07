@@ -31,8 +31,7 @@ def download(url, save_dir, limit=30*1024*1024, timeout=180) -> str:
         # 1. 发送GET请求下载文件
         headers = {
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36',
-            'Referer': 'https://www.jcaigc.cn/',
-            'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+            'Accept': '*/*',
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
         }
         response = requests.get(url, stream=True, timeout=timeout, headers=headers)
