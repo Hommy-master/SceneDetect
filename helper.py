@@ -103,38 +103,34 @@ def get_user_points(api_key: str) -> float:
     Raises:
         CustomException: 当获取积分失败时
     """
-    if not api_key or not isinstance(api_key, str):
-        raise CustomException(CustomError.PARAM_VALIDATION_FAILED, detail="API Key不能为空")
-    
     try:
         # 调用获取积分API
         params = {'apiKey': api_key}
         result = _call_user_api('GET', '/points', params=params)
         
-        # 提取积分数据
+        # 提取积分数据，仅当code为0时，data字段才有值
         code = result.get('code')
-        data = result.get('data', {})
-        points = data.get('points')
-
-        # APIKey无效
-        if code == 21002:
+        if code == 0:
+            # 确保返回float类型
+            try:
+                points = result.get('data', {}).get('points', 0.0)
+                points_float = float(points)
+                logger.info(f"Successfully retrieved user points: {points_float} for API key: {api_key[:8]}...")
+                return points_float
+            except (ValueError, TypeError):
+                logger.error(f"Invalid points format in API response, result: {result}")
+                raise CustomException(CustomError.INTERNAL_SERVER_ERROR, detail="积分格式错误")
+        elif code == 21002 or code == 400: # API Key无效
             logger.error(f"Failed to get user points: {result}, code: {code}")
-            raise CustomException(CustomError.INVALID_APIKEY, detail=f"API Key无效: {api_key}...")
-        
-        # 确保返回float类型
-        try:
-            points_float = float(points)
-            logger.info(f"Successfully retrieved user points: {points_float} for API key: {api_key[:8]}...")
-            return points_float
-        except (ValueError, TypeError):
-            logger.error(f"Invalid points format in API response: {points}")
-            raise CustomException(CustomError.INTERNAL_SERVER_ERROR, detail="积分格式错误")
-            
+            raise CustomException(CustomError.INVALID_APIKEY, detail=f"{api_key}")
+        else:
+            logger.error(f"Failed to get user points: {result}, code: {code}")
+            raise CustomException(CustomError.UNKNOWN_ERROR, detail=f"获取用户积分时发生未知错误: {result}, code: {code}")
     except CustomException:
         # 重新抛出自定义异常
         raise
     except Exception as e:
-        logger.error(f"Unexpected error getting user points for API key {api_key}...: {str(e)}")
+        logger.error(f"Unexpected error getting user points for API key {api_key}: {str(e)}")
         raise CustomException(CustomError.UNKNOWN_ERROR, detail=f"获取用户积分时发生未知错误: {str(e)}")
 
 
@@ -153,16 +149,6 @@ def deduct_user_points(api_key: str, points: float, desc: str) -> bool:
     Raises:
         CustomException: 当扣减积分失败时
     """
-    # 参数验证
-    if not api_key or not isinstance(api_key, str):
-        raise CustomException(CustomError.PARAM_VALIDATION_FAILED, detail="API Key不能为空")
-    
-    if not isinstance(points, (int, float)) or points <= 0:
-        raise CustomException(CustomError.PARAM_VALIDATION_FAILED, detail="积分数量必须为正数")
-    
-    if not desc or not isinstance(desc, str) or not desc.strip():
-        raise CustomException(CustomError.PARAM_VALIDATION_FAILED, detail="扣减原因描述不能为空")
-    
     try:
         # 调用扣减积分API
         json_data = {
@@ -172,15 +158,21 @@ def deduct_user_points(api_key: str, points: float, desc: str) -> bool:
         }
         
         result = _call_user_api('POST', '/points/deduct', json_data=json_data)
-        
-        logger.info(f"Successfully deducted {points} points for API key {api_key[:8]}..., reason: {desc}")
-        return True
-        
+        code = result.get('code')
+        if code == 0:
+            logger.info(f"Successfully deducted {points} points for API key {api_key}..., reason: {desc}")
+            return True
+        elif code == 21002:
+            logger.error(f"Failed to deduct points: {result}, code: {code}")
+            raise CustomException(CustomError.INVALID_APIKEY, detail=f"API Key无效: {api_key}...")
+        else:
+            logger.error(f"Failed to deduct points: {result}, code: {code}")
+            return False
     except CustomException as e:
         logger.warning(f"Deduct points failed, API key: {api_key}..., error: {str(e)}")
         return False
     except Exception as e:
-        logger.error(f"Unexpected error deducting points for API key {api_key[:8]}...: {str(e)}")
+        logger.error(f"Unexpected error deducting points for API key {api_key}...: {str(e)}")
         return False
 
 def _call_user_api(method: str, endpoint: str, params: Optional[dict] = None, json_data: Optional[dict] = None, timeout: int = 30) -> Dict[str, Any]:
@@ -200,7 +192,7 @@ def _call_user_api(method: str, endpoint: str, params: Optional[dict] = None, js
     Raises:
         CustomException: 当API调用失败或返回错误时
     """
-    base_url = "https://users.jcagigc.cn/openapi/user/v1"
+    base_url = "https://user.jcaigc.cn/openapi/user/v1"
     url = f"{base_url}{endpoint}"
     
     headers = {
@@ -224,19 +216,10 @@ def _call_user_api(method: str, endpoint: str, params: Optional[dict] = None, js
         # 解析JSON响应
         try:
             result = response.json()
+            return result
         except ValueError as e:
             logger.error(f"Failed to parse API response as JSON: {response.text}")
             raise CustomException(CustomError.INTERNAL_SERVER_ERROR, detail="API响应格式错误")
-        
-        # 检查业务状态码
-        if result.get('code') != 0:
-            error_message = result.get('message', '未知错误')
-            logger.warning(f"API returned error: code={result.get('code')}, message={error_message}")
-            raise CustomException(CustomError.INTERNAL_SERVER_ERROR, detail=f"用户API错误: {error_message}")
-        
-        logger.info(f"User API call successful: {method} {url}")
-        return result
-        
     except requests.exceptions.Timeout:
         logger.error(f"User API timeout: {method} {url}")
         raise CustomException(CustomError.INTERNAL_SERVER_ERROR, detail="用户API调用超时")

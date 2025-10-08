@@ -14,7 +14,7 @@ class CustomError(Enum):
     FILE_SIZE_LIMIT_EXCEEDED = (2002, "文件大小超出限制", "File size exceeds the limit")
     DOWNLOAD_FILE_FAILED = (2003, "下载文件失败", "Download file failed")
     INSUFFICIENT_ACCOUNT_BALANCE = (2004, "帐户余额不足，请充值", "Insufficient account balance, please recharge")
-    INVALID_APIKEY = (2005, "无效的API密钥", "Invalid API key")
+    INVALID_APIKEY = (2005, "无效的apiKey", "Invalid apiKey")
 
     # ===== 系统错误码 (9000-9999) =====
     INTERNAL_SERVER_ERROR = (9998, "系统内部错误", "Internal server error")

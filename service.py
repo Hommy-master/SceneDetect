@@ -30,19 +30,25 @@ def video_scene_split(
         CustomException: 自定义异常
     """
     # 1. 验证api_key
-    #pt = helper.get_user_points(api_key)
+    pt: float = -1
+    try:
+        pt = helper.get_user_points(api_key)
+    except CustomException as e:
+        if e.err == CustomError.INVALID_APIKEY:
+            raise e
+        logger.warning(f"Insufficient points, video_url: {video_url}")
 
     # 2. 下载视频文件
     video_file = helper.download(video_url, config.TEMP_DIR)
 
     # 3. 获取视频时长
-    #duration = helper.get_video_duration(video_file)
-    #price = duration * PRICE
-    #if pt < price:
-    #    logger.warning(f"Insufficient points, video_url: {video_url}, price: {price}, total points: {pt}")
-    #    raise CustomException(err=CustomError.INSUFFICIENT_ACCOUNT_BALANCE)
-    #else:
-    #    logger.info(f"video_url: {video_url}, price: {price}, total points: {pt}")
+    duration = helper.get_video_duration(video_file)
+    price = duration * PRICE
+    if pt < price and pt > 0:
+        logger.info(f"Insufficient points, video_url: {video_url}, price: {price}, total points: {pt}")
+        raise CustomException(err=CustomError.INSUFFICIENT_ACCOUNT_BALANCE)
+    else:
+        logger.info(f"video_url: {video_url}, price: {price}, total points: {pt}")
 
     # 4. 获取文件名称
     video_name = os.path.basename(video_file)
@@ -83,8 +89,9 @@ def video_scene_split(
         # 按场景编号排序（更符合直观顺序）
         output_files.sort()
 
-        # 消减用户的帐户余额
-        # helper.deduct_user_points(api_key, price, '调用按镜头切分视频')
+        # 消减用户的帐户余额，这里的判断是保证上面的查询是成功的，如果上面的查询失败了，这里就不做处理了
+        if pt > 0:
+            helper.deduct_user_points(api_key, price, '调用按镜头切分视频')
         
         return gen_download_urls(output_files)
     except subprocess.TimeoutExpired:

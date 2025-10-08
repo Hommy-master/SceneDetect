@@ -3,7 +3,7 @@ from logging.config import dictConfig
 import os
 
 class RelativePathFormatter(logging.Formatter):
-    def __init__(self, *args, project_root: str = None, **kwargs):
+    def __init__(self, *args, project_root: str = "", **kwargs):
         super().__init__(*args, **kwargs)
         # 把项目根目录传进来
         self.project_root = project_root or os.getcwd()
