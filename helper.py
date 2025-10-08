@@ -15,6 +15,7 @@ DEFAULT_FILE_SIZE_LIMIT = 100 * 1024 * 1024  # 100MB
 DEFAULT_DOWNLOAD_TIMEOUT = 180  # 3分钟
 DEFAULT_API_TIMEOUT = 30  # 30秒
 DEFAULT_FFPROBE_TIMEOUT = 30  # 30秒
+DEFAULT_RETRY_COUNT = 2  # 默认重试次数
 CHUNK_SIZE = 8192  # 8KB
 USER_API_BASE_URL = "https://user.jcaigc.cn/openapi/user/v1"
 
@@ -32,15 +33,16 @@ API_HEADERS = {
 }
 
 
-def download(url: str, save_dir: str, limit: int = DEFAULT_FILE_SIZE_LIMIT, timeout: int = DEFAULT_DOWNLOAD_TIMEOUT) -> str:
+def download(url: str, save_dir: str, limit: int = DEFAULT_FILE_SIZE_LIMIT, timeout: int = DEFAULT_DOWNLOAD_TIMEOUT, retry: int = DEFAULT_RETRY_COUNT) -> str:
     """
-    下载文件并根据Content-Type判断文件类型
+    下载文件并根据Content-Type判断文件类型，支持重试机制
     
     Args:
         url: 文件的URL地址
         save_dir: 文件保存目录
         limit: 文件大小限制（字节），默认100MB
         timeout: 整体下载超时时间（秒），默认3分钟
+        retry: 下载失败时的重试次数，默认3次
     
     Returns:
         str: 完整的文件路径
@@ -48,36 +50,59 @@ def download(url: str, save_dir: str, limit: int = DEFAULT_FILE_SIZE_LIMIT, time
     Raises:
         CustomException: 下载失败时抛出异常
     """
-    # 生成唯一文件名
-    save_path = os.path.join(save_dir, gen_unique_id())
+    last_exception = None
     
-    try:
-        # 发送GET请求下载文件
-        response = requests.get(url, stream=True, timeout=timeout, headers=DOWNLOAD_HEADERS)
-        response.raise_for_status()
+    for attempt in range(retry + 1):  # 总共尝试 retry + 1 次（包括第一次）
+        # 每次尝试都生成新的文件名，避免冲突
+        save_path = os.path.join(save_dir, gen_unique_id())
         
-        # 获取并处理文件类型
-        save_path = _determine_file_path_with_extension(response, save_path)
-        
-        # 下载文件并检查大小
-        _download_file_with_size_check(response, save_path, limit, url)
-        
-        # 验证下载完整性
-        _validate_download_integrity(response, save_path, url)
-        
-        logger.info(f"Download success, url: {url}, save_path: {save_path}")
-        return save_path
-        
-    except Exception as e:
-        # 清理可能已部分下载的文件
-        if os.path.exists(save_path):
-            os.remove(save_path)
-        
-        if isinstance(e, CustomException):
-            raise
-        
-        logger.warning(f"Download failed, url: {url}, error: {str(e)}")
-        raise CustomException(CustomError.DOWNLOAD_FILE_FAILED)
+        try:
+            logger.info(f"Downloading file, attempt {attempt + 1}/{retry + 1}, url: {url}")
+            
+            # 发送GET请求下载文件
+            response = requests.get(url, stream=True, timeout=timeout, headers=DOWNLOAD_HEADERS)
+            response.raise_for_status()
+            
+            # 获取并处理文件类型
+            save_path = _determine_file_path_with_extension(response, save_path)
+            
+            # 下载文件并检查大小
+            _download_file_with_size_check(response, save_path, limit, url)
+            
+            # 验证下载完整性
+            _validate_download_integrity(response, save_path, url)
+            
+            logger.info(f"Download success on attempt {attempt + 1}, url: {url}, save_path: {save_path}")
+            return save_path
+            
+        except Exception as e:
+            # 清理可能已部分下载的文件
+            if os.path.exists(save_path):
+                try:
+                    os.remove(save_path)
+                    logger.debug(f"Cleaned up partial download file: {save_path}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup partial download file {save_path}: {cleanup_error}")
+            
+            last_exception = e
+            
+            # 如果是文件大小超限错误，不需要重试
+            if isinstance(e, CustomException) and e.err == CustomError.FILE_SIZE_LIMIT_EXCEEDED:
+                logger.error(f"File size limit exceeded, no retry needed, url: {url}")
+                raise e
+            
+            # 如果不是最后一次尝试，记录警告并等待
+            if attempt < retry:
+                logger.warning(f"Download attempt {attempt + 1} failed, url: {url}, error: {str(e)}")
+            else:
+                logger.error(f"Download failed after {retry + 1} attempts, url: {url}, final error: {str(e)}")
+    
+    # 所有重试都失败后，抛出最后一次的异常
+    if isinstance(last_exception, CustomException):
+        raise last_exception
+    
+    logger.error(f"Download failed after all retries, url: {url}, last error: {str(last_exception)}")
+    raise CustomException(CustomError.DOWNLOAD_FILE_FAILED)
 
 def gen_unique_id() -> str:
     """
