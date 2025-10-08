@@ -33,6 +33,7 @@ class ResponseMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next):
+        lang = "zh"
         try:
             lang = self._get_language_from_request(request)
             response = await call_next(request)

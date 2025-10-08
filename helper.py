@@ -160,19 +160,19 @@ def deduct_user_points(api_key: str, points: float, desc: str) -> bool:
         result = _call_user_api('POST', '/points/deduct', json_data=json_data)
         code = result.get('code')
         if code == 0:
-            logger.info(f"Successfully deducted {points} points for API key {api_key}..., reason: {desc}")
+            logger.info(f"Successfully deducted {points} points for API key {api_key}, reason: {desc}")
             return True
-        elif code == 21002:
+        elif code == 21002 or code == 400:
             logger.error(f"Failed to deduct points: {result}, code: {code}")
-            raise CustomException(CustomError.INVALID_APIKEY, detail=f"API Key无效: {api_key}...")
+            raise CustomException(CustomError.INVALID_APIKEY, detail=f"{api_key}")
         else:
             logger.error(f"Failed to deduct points: {result}, code: {code}")
             return False
     except CustomException as e:
-        logger.warning(f"Deduct points failed, API key: {api_key}..., error: {str(e)}")
+        logger.warning(f"Deduct points failed, API key: {api_key}, error: {str(e)}")
         return False
     except Exception as e:
-        logger.error(f"Unexpected error deducting points for API key {api_key}...: {str(e)}")
+        logger.error(f"Unexpected error deducting points for API key {api_key}: {str(e)}")
         return False
 
 def _call_user_api(method: str, endpoint: str, params: Optional[dict] = None, json_data: Optional[dict] = None, timeout: int = 30) -> Dict[str, Any]:
