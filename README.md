@@ -317,3 +317,6 @@ docker logs -f scenedetect
 ## 📞 支持
 
 如有问题，请联系：taohongmin51@gmail.com
+微信：
+
+  ![微信](./assets/wechat.png)
