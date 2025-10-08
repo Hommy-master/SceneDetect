@@ -136,37 +136,42 @@ def video_scene_split(
     
     # 2. 下载视频文件
     video_file = helper.download(video_url, config.TEMP_DIR)
-
-    # 3. 获取视频时长并计算价格
-    duration = helper.get_video_duration(video_file)
-    price = duration * PRICE_PER_SECOND
     
-    # 4. 检查用户积分是否足够
-    _validate_user_balance(user_points, price, video_url)
-    
-    # 5. 获取文件名称
-    video_name = os.path.basename(video_file)
-    base_name = os.path.splitext(video_name)[0]
-    logger.info(f"video_file: {video_file}, base_name: {base_name}")
-    
-    # 6. 执行场景检测和视频分割
     try:
-        output_files = _execute_scene_detection(video_file, base_name, min_scene_length, timeout)
+        # 3. 获取视频时长并计算价格
+        duration = helper.get_video_duration(video_file)
+        price = duration * PRICE_PER_SECOND
         
-        # 消减用户的帐户余额，这里的判断是保证上面的查询是成功的，如果上面的查询失败了，这里就不做处理了
-        if user_points > MIN_POINTS_THRESHOLD:
-            helper.deduct_user_points(api_key, price, '调用按镜头切分视频')
+        # 4. 检查用户积分是否足够
+        _validate_user_balance(user_points, price, video_url)
         
-        return gen_download_urls(output_files)
-    except subprocess.TimeoutExpired:
-        logger.warning(f"Video scene split timeout, video_url: {video_url}")
-        raise CustomException(err=CustomError.VIDEO_SCENE_SPLIT_TIMEOUT)
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Video scene split failed, video_url: {video_url}, returncode: {e.returncode}, stderr: {e.stderr}")
-        raise CustomException(err=CustomError.VIDEO_SCENE_SPLIT_FAILED)
-    except Exception as e:
-        logger.error(f"Video scene split unknown error, video_url: {video_url}, detail: {traceback.format_exc()}")
-        raise CustomException(err=CustomError.VIDEO_SCENE_SPLIT_FAILED)
+        # 5. 获取文件名称
+        video_name = os.path.basename(video_file)
+        base_name = os.path.splitext(video_name)[0]
+        logger.info(f"video_file: {video_file}, base_name: {base_name}")
+        
+        # 6. 执行场景检测和视频分割
+        try:
+            output_files = _execute_scene_detection(video_file, base_name, min_scene_length, timeout)
+            
+            # 消减用户的帐户余额，这里的判断是保证上面的查询是成功的，如果上面的查询失败了，这里就不做处理了
+            if user_points > MIN_POINTS_THRESHOLD:
+                helper.deduct_user_points(api_key, price, '调用按镜头切分视频')
+            
+            return gen_download_urls(output_files)
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Video scene split timeout, video_url: {video_url}")
+            raise CustomException(err=CustomError.VIDEO_SCENE_SPLIT_TIMEOUT)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Video scene split failed, video_url: {video_url}, returncode: {e.returncode}, stderr: {e.stderr}")
+            raise CustomException(err=CustomError.VIDEO_SCENE_SPLIT_FAILED)
+        except Exception as e:
+            logger.error(f"Video scene split unknown error, video_url: {video_url}, detail: {traceback.format_exc()}")
+            raise CustomException(err=CustomError.VIDEO_SCENE_SPLIT_FAILED)
+    
+    finally:
+        # 7. 清理临时下载的视频文件
+        helper.cleanup_temp_file(video_file)
 
 def gen_download_url(file_path: str) -> str:
     """

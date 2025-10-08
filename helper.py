@@ -504,7 +504,7 @@ def _extract_duration_from_ffprobe_data(ffprobe_data: Dict[str, Any]) -> float:
     raise CustomException(CustomError.INTERNAL_SERVER_ERROR, "Unable to extract duration from audio file")
 
 
-def _cleanup_temp_file(temp_file_path: Optional[str]) -> None:
+def cleanup_temp_file(temp_file_path: Optional[str]) -> None:
     """
     清理临时文件
     
