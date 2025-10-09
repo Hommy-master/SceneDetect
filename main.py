@@ -14,6 +14,8 @@ app.include_router(router.router, prefix="/openapi", tags=["SceneDetect"])
 app.add_middleware(middlewares.PrepareMiddleware)
 # 注册统一响应处理中间件（注意顺序，应该在其他中间件之后注册）
 app.add_middleware(middlewares.ResponseMiddleware)
+# 注册超时处理中间件
+app.add_middleware(middlewares.TimeoutMiddleware, timeout_seconds=600)
 
 # 5. 打印所有路由
 for r in app.routes:

@@ -6,6 +6,7 @@ from logger import logger
 import json
 import os
 import config
+import asyncio
 
 
 class PrepareMiddleware(BaseHTTPMiddleware):
@@ -159,3 +160,52 @@ class ResponseMiddleware(BaseHTTPMiddleware):
         # 获取错误信息
         error_response = CustomError.INTERNAL_SERVER_ERROR.as_dict(detail=str(e), lang=lang)
         return JSONResponse(status_code=200, content=error_response)
+
+
+class TimeoutMiddleware(BaseHTTPMiddleware):
+    """超时中间件
+    功能：
+    1. 设置请求超时时间，默认600秒
+    2. 当请求超时时，主动取消任务并返回超时错误
+    """
+
+    def __init__(self, app, timeout_seconds: int = 600):
+        super().__init__(app)
+        self.timeout_seconds = timeout_seconds
+
+    async def dispatch(self, request: Request, call_next):
+        try:
+            # 使用 asyncio.wait_for 来设置超时
+            response = await asyncio.wait_for(
+                call_next(request), 
+                timeout=self.timeout_seconds
+            )
+            return response
+            
+        except asyncio.TimeoutError:
+            # 获取客户端语言偏好
+            lang = self._get_language_from_request(request)
+            
+            logger.warning(f"Request timeout after {self.timeout_seconds} seconds: {request.url}")
+            
+            # 返回超时错误响应
+            error_response = {
+                "code": 408,
+                "message": "请求超时" if lang == "zh" else "Request timeout",
+                "detail": f"请求在 {self.timeout_seconds} 秒内未完成" if lang == "zh" else f"Request did not complete within {self.timeout_seconds} seconds"
+            }
+            
+            return JSONResponse(status_code=200, content=error_response)
+            
+        except Exception as e:
+            # 处理其他异常
+            lang = self._get_language_from_request(request)
+            logger.error(f"Unexpected error in timeout middleware: {str(e)}")
+            
+            error_response = CustomError.INTERNAL_SERVER_ERROR.as_dict(detail=str(e), lang=lang)
+            return JSONResponse(status_code=200, content=error_response)
+
+    def _get_language_from_request(self, request: Request) -> str:
+        """从请求头获取语言偏好"""
+        lang = request.headers.get('Accept-Language', 'zh').split(',')[0].split('-')[0]
+        return lang if lang in ['zh', 'en'] else 'zh'
