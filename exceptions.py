@@ -15,6 +15,7 @@ class CustomError(Enum):
     DOWNLOAD_FILE_FAILED = (2003, "下载文件失败", "Download file failed")
     INSUFFICIENT_ACCOUNT_BALANCE = (2004, "帐户余额不足，请充值", "Insufficient account balance, please recharge")
     INVALID_APIKEY = (2005, "无效的apiKey", "Invalid apiKey")
+    DOWNLOAD_FILE_TIMEOUT = (2006, "下载文件超时，请检查资源文件下载是否正常", "Download file timeout, please check if the resource file download is normal")
 
     # ===== 系统错误码 (9000-9999) =====
     INTERNAL_SERVER_ERROR = (9998, "系统内部错误", "Internal server error")

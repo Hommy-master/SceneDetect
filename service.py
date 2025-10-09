@@ -183,7 +183,17 @@ def gen_download_url(file_path: str) -> str:
     Returns:
         str: 下载 URL
     """
-    # 替换文件路径中的 /app/ 为 DOWNLOAD_URL
+    # 1. 优先使用对象存储服务
+    try:
+        # 上传文件
+        download_url = helper.cos_upload_file(file_path)
+        # 删除临时文件
+        helper.cleanup_temp_file(file_path)
+        return download_url
+    except Exception as e:
+        logger.info(f"Failed to upload file to COS, file_path: {file_path}, detail: {traceback.format_exc()}")
+
+    # 2. 使用本地存储，替换文件路径中的 /app/ 为 DOWNLOAD_URL
     download_url = file_path.replace("/app/", config.DOWNLOAD_URL)
     logger.debug(f"Generated download URL: {file_path} -> {download_url}")
     return download_url

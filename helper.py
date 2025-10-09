@@ -5,18 +5,25 @@ import datetime
 import uuid
 import subprocess
 import json
+import time
 from typing import Dict, Any, Optional
 
 from logger import logger
 from exceptions import CustomException, CustomError
+from qcloud_cos import CosConfig
+from qcloud_cos import CosS3Client
+import config
 
 # 常量配置
-DEFAULT_FILE_SIZE_LIMIT = 100 * 1024 * 1024  # 100MB
-DEFAULT_DOWNLOAD_TIMEOUT = 180  # 3分钟
+DEFAULT_FILE_SIZE_LIMIT = 300 * 1024 * 1024  # 300MB
+DEFAULT_DOWNLOAD_TIMEOUT = 300  # 5分钟
+DEFAULT_CONNECT_TIMEOUT = 30  # 连接超时30秒
+DEFAULT_READ_TIMEOUT = 60  # 读取超时60秒
 DEFAULT_API_TIMEOUT = 30  # 30秒
 DEFAULT_FFPROBE_TIMEOUT = 30  # 30秒
 DEFAULT_RETRY_COUNT = 2  # 默认重试次数
 CHUNK_SIZE = 8192  # 8KB
+CHUNK_READ_TIMEOUT = 10  # 每个块的读取超时时间（秒）
 USER_API_BASE_URL = "https://user.jcaigc.cn/openapi/user/v1"
 
 # HTTP请求头
@@ -59,15 +66,20 @@ def download(url: str, save_dir: str, limit: int = DEFAULT_FILE_SIZE_LIMIT, time
         try:
             logger.info(f"Downloading file, attempt {attempt + 1}/{retry + 1}, url: {url}")
             
-            # 发送GET请求下载文件
-            response = requests.get(url, stream=True, timeout=timeout, headers=DOWNLOAD_HEADERS)
+            # 发送GET请求下载文件，使用分离的连接和读取超时
+            response = requests.get(
+                url, 
+                stream=True, 
+                timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT),  # (连接超时, 读取超时)
+                headers=DOWNLOAD_HEADERS
+            )
             response.raise_for_status()
             
             # 获取并处理文件类型
             save_path = _determine_file_path_with_extension(response, save_path)
             
-            # 下载文件并检查大小
-            _download_file_with_size_check(response, save_path, limit, url)
+            # 下载文件并检查大小（改进版本，支持超时检测）
+            _download_file_with_timeout_and_size_check(response, save_path, limit, url, timeout)
             
             # 验证下载完整性
             _validate_download_integrity(response, save_path, url)
@@ -135,35 +147,75 @@ def _determine_file_path_with_extension(response: requests.Response, save_path: 
     return save_path
 
 
-def _download_file_with_size_check(response: requests.Response, save_path: str, limit: int, url: str) -> None:
+def _download_file_with_timeout_and_size_check(response: requests.Response, save_path: str, limit: int, url: str, total_timeout: int) -> None:
     """
-    下载文件并实时检查文件大小
+    下载文件并实时检查文件大小，支持超时检测
     
     Args:
         response: HTTP响应对象
         save_path: 文件保存路径
         limit: 文件大小限制
         url: 文件URL（用于日志）
+        total_timeout: 总超时时间（秒）
     
     Raises:
-        CustomException: 文件大小超限时抛出
+        CustomException: 文件大小超限或下载超时时抛出
     """
     downloaded_size = 0
+    start_time = time.time()
+    last_chunk_time = start_time
     
     with open(save_path, 'wb') as f:
-        for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
-            if chunk:
-                f.write(chunk)
-                downloaded_size += len(chunk)
+        try:
+            for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                current_time = time.time()
                 
-                # 检查文件大小是否超过限制
-                if downloaded_size > limit:
-                    f.close()
-                    os.remove(save_path)
+                # 检查总体超时
+                if current_time - start_time > total_timeout:
+                    raise CustomException(
+                        CustomError.DOWNLOAD_FILE_TIMEOUT, 
+                        detail=f"下载超时，总耗时{current_time - start_time:.1f}秒，超过{total_timeout}秒限制"
+                    )
+                
+                # 检查单个块的读取超时（网络停滞检测）
+                if current_time - last_chunk_time > CHUNK_READ_TIMEOUT:
+                    raise CustomException(
+                        CustomError.DOWNLOAD_FILE_FAILED, 
+                        detail=f"网络连接中断，单个数据块读取超时{CHUNK_READ_TIMEOUT}秒"
+                    )
+                
+                if chunk:
+                    f.write(chunk)
+                    downloaded_size += len(chunk)
+                    last_chunk_time = current_time
                     
-                    limit_mb = limit / 1024 / 1024
-                    logger.info(f"Download failed, url: {url}, error: File size exceeds the limit of {limit_mb:.2f}MB")
-                    raise CustomException(CustomError.FILE_SIZE_LIMIT_EXCEEDED, detail=f"{limit_mb:.2f} MB")
+                    # 检查文件大小是否超过限制
+                    if downloaded_size > limit:
+                        f.close()
+                        os.remove(save_path)
+                        
+                        limit_mb = limit / 1024 / 1024
+                        logger.info(f"Download failed, url: {url}, error: File size exceeds the limit of {limit_mb:.2f}MB")
+                        raise CustomException(CustomError.FILE_SIZE_LIMIT_EXCEEDED, detail=f"{limit_mb:.2f} MB")
+                    
+                    # 每下载10MB记录一次进度（避免日志过多）
+                    if downloaded_size % (10 * 1024 * 1024) == 0:
+                        logger.info(f"Downloaded {downloaded_size / 1024 / 1024:.1f}MB for {url}")
+                        
+        except requests.exceptions.ChunkedEncodingError as e:
+            raise CustomException(
+                CustomError.DOWNLOAD_FILE_FAILED, 
+                detail=f"数据传输错误：{str(e)}"
+            )
+        except Exception as e:
+            # 如果是我们自己的异常，直接重新抛出
+            if isinstance(e, CustomException):
+                raise e
+            # 其他异常包装为下载失败
+            raise CustomException(
+                CustomError.DOWNLOAD_FILE_FAILED, 
+                detail=f"下载过程中发生错误：{str(e)}"
+            )
 
 
 def _validate_download_integrity(response: requests.Response, save_path: str, url: str) -> None:
@@ -596,3 +648,35 @@ def _decode_ffprobe_output(stdout_bytes: bytes) -> str:
     stdout_text = stdout_bytes.decode('utf-8', errors='replace')
     logger.warning("Used error replacement for ffprobe output decoding")
     return stdout_text
+
+
+def cos_upload_file(file_path: str) -> str:
+    """
+    上传文件到OSS
+    
+    Args:
+        file_path: 文件路径
+
+    Returns:
+        str: 对象URL
+    
+    Raises:
+        CustomException: 上传失败
+    """
+    cfg = CosConfig(Region=config.COS_REGION, SecretId=config.COS_SECRET_ID, SecretKey=config.COS_SECRET_KEY, Token=None)
+    cli = CosS3Client(cfg)
+    try:
+        # 1. 上传文件
+        key = os.path.basename(file_path)
+        response = cli.put_object_from_local_file(
+            Bucket=config.COS_BUCKET_NAME, 
+            LocalFilePath=file_path,
+            Key=key       
+        )
+        logger.info(f"COS upload success, response: {response}")
+        # 2. 拼公开下载地址
+        public_url = f'https://{config.COS_BUCKET_NAME}.cos.{config.COS_REGION}.myqcloud.com/{key}'
+        return public_url
+    except Exception as e:
+        logger.error(f"COS upload failed: {e}")
+        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, "COS upload failed")
