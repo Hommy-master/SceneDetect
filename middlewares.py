@@ -124,9 +124,12 @@ class ResponseMiddleware(BaseHTTPMiddleware):
         try:
             data = json.loads(body_str)
             
-            # 如果响应已经有统一格式，直接返回
+            # 如果响应已经有统一格式，重新构建响应（因为原响应体已被消费）
             if 'code' in data and 'message' in data:
-                return response
+                return JSONResponse(
+                    status_code=response.status_code,
+                    content=data
+                )
                 
             # 创建统一格式的响应（成功响应保留data字段）
             unified_response = {
