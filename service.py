@@ -12,6 +12,7 @@ import config
 # 常量定义
 PRICE_PER_SECOND: float = 0.01  # 每秒视频的价格
 MIN_POINTS_THRESHOLD: float = 0  # 最小积分阈值
+EXEC_TIMEOUT: int = 180
 
 def _validate_api_key_and_get_points(api_key: str, video_url: str) -> float:
     """
@@ -59,14 +60,14 @@ def _validate_user_balance(user_points: float, price: float, video_url: str) -> 
         logger.info(f"Balance check passed, video_url: {video_url}, price: {price}, total points: {user_points}")
 
 
-def _execute_scene_detection(video_file: str, base_name: str, min_scene_length: float, timeout: int) -> List[str]:
+def _execute_scene_detection(video_file: str, base_name: str, threshold: int, timeout: int) -> List[str]:
     """
     执行场景检测和视频分割
     
     Args:
         video_file: 视频文件路径
         base_name: 基础文件名（不包含扩展名）
-        min_scene_length: 最小场景长度
+        threshold: 灵敏度
         timeout: 超时时间
     
     Returns:
@@ -82,7 +83,8 @@ def _execute_scene_detection(video_file: str, base_name: str, min_scene_length: 
         'scenedetect',
         '-i', video_file,
         'detect-content',
-        '-m', str(min_scene_length),
+        '--threshold', str(threshold),
+        '--min-scene-len', '2',
         'split-video',
         '-o', config.VIDEO_OUTPUT_DIR,
         '-q'
@@ -114,16 +116,15 @@ def _execute_scene_detection(video_file: str, base_name: str, min_scene_length: 
 def video_scene_split(
     api_key: str,
     video_url: str, 
-    min_scene_length: float = 2.0,
-    timeout: int = 180) -> List[str]:
+    threshold: int = 27
+    ) -> List[str]:
     """
     视频场景分割
     
     Args:
         api_key: 用户API密钥
         video_url: 视频URL地址
-        min_scene_length: 最小场景长度（秒），默认2.0秒
-        timeout: 超时时间（秒），默认180秒
+        threshold: 灵敏度，默认27
     
     Returns:
         List[str]: 分割后的视频文件下载链接列表
@@ -152,7 +153,7 @@ def video_scene_split(
         
         # 6. 执行场景检测和视频分割
         try:
-            output_files = _execute_scene_detection(video_file, base_name, min_scene_length, timeout)
+            output_files = _execute_scene_detection(video_file, base_name, threshold, EXEC_TIMEOUT)
             
             # 消减用户的帐户余额，这里的判断是保证上面的查询是成功的，如果上面的查询失败了，这里就不做处理了
             if user_points > MIN_POINTS_THRESHOLD:
@@ -183,7 +184,15 @@ def gen_download_url(file_path: str) -> str:
     Returns:
         str: 下载 URL
     """
-    # 1. 优先使用对象存储服务
+    # 1. 如果没有COS配置，则使用本地存储
+    if config.COS_BUCKET_NAME == "" or config.COS_SECRET_ID == "" \
+        or config.COS_SECRET_KEY == "" or config.COS_REGION == "":
+        # 2. 替换文件路径中的 /app/ 为 DOWNLOAD_URL
+        download_url = file_path.replace("/app/", config.DOWNLOAD_URL)
+        logger.debug(f"Generated download URL: {file_path} -> {download_url}")
+        return download_url        
+
+    # 2. 如果有COS配置，则使用COS
     try:
         # 上传文件
         download_url = helper.cos_upload_file(file_path)
@@ -193,10 +202,11 @@ def gen_download_url(file_path: str) -> str:
     except Exception as e:
         logger.info(f"Failed to upload file to COS, file_path: {file_path}, detail: {traceback.format_exc()}")
 
-    # 2. 使用本地存储，替换文件路径中的 /app/ 为 DOWNLOAD_URL
+    # 3. 兜底：使用本地存储，替换文件路径中的 /app/ 为 DOWNLOAD_URL
     download_url = file_path.replace("/app/", config.DOWNLOAD_URL)
     logger.debug(f"Generated download URL: {file_path} -> {download_url}")
-    return download_url
+    return download_url    
+
 
 
 def gen_download_urls(files: List[str]) -> List[str]:

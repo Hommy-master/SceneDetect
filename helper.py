@@ -16,21 +16,28 @@ import config
 
 # 常量配置
 DEFAULT_FILE_SIZE_LIMIT = 300 * 1024 * 1024  # 300MB
-DEFAULT_DOWNLOAD_TIMEOUT = 300  # 5分钟
-DEFAULT_CONNECT_TIMEOUT = 30  # 连接超时30秒
-DEFAULT_READ_TIMEOUT = 60  # 读取超时60秒
+DEFAULT_DOWNLOAD_TIMEOUT = 300  # 5分钟，增加了超时时间
+DEFAULT_CONNECT_TIMEOUT = 30  # 连接超时60秒，增加容忍度
+DEFAULT_READ_TIMEOUT = 120  # 读取超时120秒，增加容忍度
 DEFAULT_API_TIMEOUT = 30  # 30秒
 DEFAULT_FFPROBE_TIMEOUT = 30  # 30秒
-DEFAULT_RETRY_COUNT = 2  # 默认重试次数
-CHUNK_SIZE = 8192  # 8KB
-CHUNK_READ_TIMEOUT = 10  # 每个块的读取超时时间（秒）
+DEFAULT_RETRY_COUNT = 5  # 默认重试次数增加到5次
+CHUNK_SIZE = 16384  # 16KB，增加块大小提高效率
+CHUNK_READ_TIMEOUT = 30  # 每个块的读取超时时间增加到30秒
+CONNECTION_RETRY_DELAY = 1  # 连接重试间隔时间（秒）
+MAX_RETRY_DELAY = 60  # 最大重试等待时间（秒）
+MIN_PARTIAL_SIZE = 1024  # 最小部分下载大小（字节），小于此尺寸不使用断点续传
 USER_API_BASE_URL = "https://user.jcaigc.cn/openapi/user/v1"
 
-# HTTP请求头
+# HTTP请求头（优化网络稳定性）
 DOWNLOAD_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': '*/*',
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Accept-Encoding': 'identity',  # 禁用压缩，避免解压问题
+    'Connection': 'keep-alive',  # 保持连接
+    'Cache-Control': 'no-cache',  # 不使用缓存
+    'Pragma': 'no-cache'  # 兼容性缓存控制
 }
 
 API_HEADERS = {
@@ -42,14 +49,14 @@ API_HEADERS = {
 
 def download(url: str, save_dir: str, limit: int = DEFAULT_FILE_SIZE_LIMIT, timeout: int = DEFAULT_DOWNLOAD_TIMEOUT, retry: int = DEFAULT_RETRY_COUNT) -> str:
     """
-    下载文件并根据Content-Type判断文件类型，支持重试机制
+    下载文件并根据Content-Type判断文件类型，支持高度稳定的断点续传和智能重试机制
     
     Args:
         url: 文件的URL地址
         save_dir: 文件保存目录
-        limit: 文件大小限制（字节），默认100MB
-        timeout: 整体下载超时时间（秒），默认3分钟
-        retry: 下载失败时的重试次数，默认3次
+        limit: 文件大小限制（字节），默认300MB
+        timeout: 整体下载超时时间（秒），默认5分钟
+        retry: 下载失败时的重试次数，默认5次
     
     Returns:
         str: 完整的文件路径
@@ -57,57 +64,106 @@ def download(url: str, save_dir: str, limit: int = DEFAULT_FILE_SIZE_LIMIT, time
     Raises:
         CustomException: 下载失败时抛出异常
     """
+    # 生成固定的文件路径（不再每次重新生成）
+    base_filename = gen_unique_id()
+    temp_save_path = os.path.join(save_dir, base_filename)
+    
+    # 检查网络连接质量和服务器支持情况
+    network_quality = _assess_network_quality(url)
+    supports_range = _check_range_support_with_retry(url)
+    
+    logger.info(f"Network quality: {network_quality}, Range support: {supports_range} for {url}")
+    
+    # 根据网络质量调整超时参数
+    adaptive_timeouts = _calculate_adaptive_timeouts(network_quality, timeout)
+    
     last_exception = None
+    consecutive_failures = 0  # 连续失败次数
     
     for attempt in range(retry + 1):  # 总共尝试 retry + 1 次（包括第一次）
-        # 每次尝试都生成新的文件名，避免冲突
-        save_path = os.path.join(save_dir, gen_unique_id())
-        
         try:
             logger.info(f"Downloading file, attempt {attempt + 1}/{retry + 1}, url: {url}")
             
-            # 发送GET请求下载文件，使用分离的连接和读取超时
-            response = requests.get(
-                url, 
-                stream=True, 
-                timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT),  # (连接超时, 读取超时)
-                headers=DOWNLOAD_HEADERS
+            # 检查是否存在部分下载的文件
+            existing_size = 0
+            if os.path.exists(temp_save_path):
+                existing_size = os.path.getsize(temp_save_path)
+                logger.info(f"Found existing partial file: {temp_save_path}, size: {existing_size} bytes")
+            
+            # 决定是否使用断点续传（仅在部分文件足够大时使用）
+            use_resume = (
+                supports_range and 
+                existing_size >= MIN_PARTIAL_SIZE and 
+                attempt > 0 and
+                consecutive_failures <= 2  # 连续失败太多时不使用断点续传
             )
-            response.raise_for_status()
             
-            # 获取并处理文件类型
-            save_path = _determine_file_path_with_extension(response, save_path)
+            if use_resume:
+                logger.info(f"Resuming download from byte {existing_size}")
+                response = _download_with_resume_enhanced(url, existing_size, adaptive_timeouts)
+            else:
+                if existing_size > 0 and (not supports_range or consecutive_failures > 2):
+                    logger.info("Removing partial file due to server limitation or repeated failures")
+                    _safe_remove_file(temp_save_path)
+                    existing_size = 0
+                logger.info("Starting fresh download with enhanced stability")
+                response = _download_fresh_enhanced(url, adaptive_timeouts)
             
-            # 下载文件并检查大小（改进版本，支持超时检测）
-            _download_file_with_timeout_and_size_check(response, save_path, limit, url, timeout)
+            # 获取并处理文件类型（只在首次下载时进行）
+            if existing_size == 0:
+                temp_save_path = _determine_file_path_with_extension(response, temp_save_path)
+            
+            # 下载文件并检查大小（增强版本）
+            _download_file_with_enhanced_stability(
+                response, temp_save_path, limit, url, adaptive_timeouts, 
+                existing_size, use_resume
+            )
             
             # 验证下载完整性
-            _validate_download_integrity(response, save_path, url)
+            _validate_download_integrity_with_resume(response, temp_save_path, url, use_resume)
             
-            logger.info(f"Download success on attempt {attempt + 1}, url: {url}, save_path: {save_path}")
-            return save_path
+            logger.info(f"Download success on attempt {attempt + 1}, url: {url}, save_path: {temp_save_path}")
+            return temp_save_path
             
         except Exception as e:
-            # 清理可能已部分下载的文件
-            if os.path.exists(save_path):
-                try:
-                    os.remove(save_path)
-                    logger.debug(f"Cleaned up partial download file: {save_path}")
-                except Exception as cleanup_error:
-                    logger.warning(f"Failed to cleanup partial download file {save_path}: {cleanup_error}")
-            
             last_exception = e
+            consecutive_failures += 1
             
-            # 如果是文件大小超限错误，不需要重试
-            if isinstance(e, CustomException) and e.err == CustomError.FILE_SIZE_LIMIT_EXCEEDED:
-                logger.error(f"File size limit exceeded, no retry needed, url: {url}")
+            # 分类处理异常
+            error_category = _classify_download_error(e)
+            
+            # 如果是不可恢复的错误，直接抛出
+            if error_category == 'fatal':
+                if os.path.exists(temp_save_path):
+                    _safe_remove_file(temp_save_path)
+                logger.error(f"Fatal error, no retry needed, url: {url}, error: {str(e)}")
                 raise e
             
             # 如果不是最后一次尝试，记录警告并等待
             if attempt < retry:
-                logger.warning(f"Download attempt {attempt + 1} failed, url: {url}, error: {str(e)}")
+                logger.warning(f"Download attempt {attempt + 1} failed, url: {url}, error: {str(e)}, category: {error_category}")
+                
+                # 根据错误类型决定是否清理文件
+                should_cleanup = _should_cleanup_on_error(error_category, supports_range, consecutive_failures)
+                if should_cleanup and os.path.exists(temp_save_path):
+                    _safe_remove_file(temp_save_path)
+                    logger.debug(f"Cleaned up partial download file: {temp_save_path}")
+                
+                # 智能重试等待策略
+                wait_time = _calculate_retry_delay(attempt, error_category, consecutive_failures)
+                logger.info(f"Waiting {wait_time}s before retry...")
+                time.sleep(wait_time)
+                
+                # 在网络问题后重新评估网络质量
+                if error_category == 'network':
+                    network_quality = _assess_network_quality(url)
+                    adaptive_timeouts = _calculate_adaptive_timeouts(network_quality, timeout)
+                    logger.info(f"Re-assessed network quality: {network_quality}")
             else:
                 logger.error(f"Download failed after {retry + 1} attempts, url: {url}, final error: {str(e)}")
+                # 最后一次失败后清理文件
+                if os.path.exists(temp_save_path):
+                    _safe_remove_file(temp_save_path)
     
     # 所有重试都失败后，抛出最后一次的异常
     if isinstance(last_exception, CustomException):
@@ -650,6 +706,229 @@ def _decode_ffprobe_output(stdout_bytes: bytes) -> str:
     return stdout_text
 
 
+def _check_range_support(url: str) -> bool:
+    """
+    检查服务器是否支持断点续传（Range请求）
+    
+    Args:
+        url: 文件URL
+    
+    Returns:
+        bool: True表示支持Range请求，False表示不支持
+    """
+    try:
+        # 发送HEAD请求检查服务器支持
+        response = requests.head(
+            url, 
+            timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT),
+            headers=DOWNLOAD_HEADERS
+        )
+        response.raise_for_status()
+        
+        # 检查Accept-Ranges头
+        accept_ranges = response.headers.get('Accept-Ranges', '').lower()
+        supports_ranges = accept_ranges == 'bytes'
+        
+        logger.info(f"Range support check for {url}: Accept-Ranges={accept_ranges}, supports={supports_ranges}")
+        return supports_ranges
+        
+    except Exception as e:
+        logger.warning(f"Failed to check range support for {url}: {str(e)}, assuming no support")
+        return False
+
+
+def _download_with_resume(url: str, resume_pos: int, timeout: int) -> requests.Response:
+    """
+    使用断点续传下载文件
+    
+    Args:
+        url: 文件URL
+        resume_pos: 断点续传的起始位置（字节）
+        timeout: 超时时间
+    
+    Returns:
+        requests.Response: HTTP响应对象
+    """
+    headers = DOWNLOAD_HEADERS.copy()
+    headers['Range'] = f'bytes={resume_pos}-'
+    
+    response = requests.get(
+        url,
+        stream=True,
+        timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT),
+        headers=headers
+    )
+    
+    # 断点续传应该返回206状态码
+    if response.status_code == 206:
+        logger.info(f"Resume download successful, status: {response.status_code}")
+    elif response.status_code == 200:
+        logger.warning("Server returned 200 instead of 206, might not support resume")
+    else:
+        response.raise_for_status()
+    
+    return response
+
+
+def _download_fresh(url: str, timeout: int) -> requests.Response:
+    """
+    全新下载文件
+    
+    Args:
+        url: 文件URL
+        timeout: 超时时间
+    
+    Returns:
+        requests.Response: HTTP响应对象
+    """
+    response = requests.get(
+        url,
+        stream=True,
+        timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT),
+        headers=DOWNLOAD_HEADERS
+    )
+    response.raise_for_status()
+    return response
+
+
+def _download_file_with_resume_support(
+    response: requests.Response, 
+    save_path: str, 
+    limit: int, 
+    url: str, 
+    total_timeout: int,
+    existing_size: int = 0,
+    is_resume: bool = False
+) -> None:
+    """
+    下载文件并实时检查文件大小，支持断点续传和超时检测
+    
+    Args:
+        response: HTTP响应对象
+        save_path: 文件保存路径
+        limit: 文件大小限制
+        url: 文件URL（用于日志）
+        total_timeout: 总超时时间（秒）
+        existing_size: 已存在的文件大小（断点续传时使用）
+        is_resume: 是否为断点续传
+    
+    Raises:
+        CustomException: 文件大小超限或下载超时时抛出
+    """
+    downloaded_size = existing_size  # 断点续传时从已下载大小开始
+    start_time = time.time()
+    last_chunk_time = start_time
+    
+    # 断点续传时使用追加模式，否则使用覆盖模式
+    file_mode = 'ab' if is_resume else 'wb'
+    
+    with open(save_path, file_mode) as f:
+        try:
+            for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                current_time = time.time()
+                
+                # 检查总体超时
+                if current_time - start_time > total_timeout:
+                    raise CustomException(
+                        CustomError.DOWNLOAD_FILE_TIMEOUT, 
+                        detail=f"下载超时，总耗时{current_time - start_time:.1f}秒，超过{total_timeout}秒限制"
+                    )
+                
+                # 检查单个块的读取超时（网络停滞检测）
+                if current_time - last_chunk_time > CHUNK_READ_TIMEOUT:
+                    raise CustomException(
+                        CustomError.DOWNLOAD_FILE_FAILED, 
+                        detail=f"网络连接中断，单个数据块读取超时{CHUNK_READ_TIMEOUT}秒"
+                    )
+                
+                if chunk:
+                    f.write(chunk)
+                    downloaded_size += len(chunk)
+                    last_chunk_time = current_time
+                    
+                    # 检查文件大小是否超过限制
+                    if downloaded_size > limit:
+                        f.close()
+                        os.remove(save_path)
+                        
+                        limit_mb = limit / 1024 / 1024
+                        logger.info(f"Download failed, url: {url}, error: File size exceeds the limit of {limit_mb:.2f}MB")
+                        raise CustomException(CustomError.FILE_SIZE_LIMIT_EXCEEDED, detail=f"{limit_mb:.2f} MB")
+                    
+                    # 每下载10MB记录一次进度（避免日志过多）
+                    if downloaded_size % (10 * 1024 * 1024) == 0:
+                        logger.info(f"Downloaded {downloaded_size / 1024 / 1024:.1f}MB for {url}")
+                        
+        except requests.exceptions.ChunkedEncodingError as e:
+            raise CustomException(
+                CustomError.DOWNLOAD_FILE_FAILED, 
+                detail=f"数据传输错误：{str(e)}"
+            )
+        except Exception as e:
+            # 如果是我们自己的异常，直接重新抛出
+            if isinstance(e, CustomException):
+                raise e
+            # 其他异常包装为下载失败
+            raise CustomException(
+                CustomError.DOWNLOAD_FILE_FAILED, 
+                detail=f"下载过程中发生错误：{str(e)}"
+            )
+
+
+def _validate_download_integrity_with_resume(
+    response: requests.Response, 
+    save_path: str, 
+    url: str, 
+    is_resume: bool = False
+) -> None:
+    """
+    验证下载文件的完整性（支持断点续传）
+    
+    Args:
+        response: HTTP响应对象
+        save_path: 文件保存路径
+        url: 文件URL（用于日志）
+        is_resume: 是否为断点续传
+    
+    Raises:
+        CustomException: 文件不完整时抛出
+    """
+    actual_size = os.path.getsize(save_path)
+    
+    if is_resume:
+        # 断点续传时，检查Content-Range头
+        content_range = response.headers.get('Content-Range')
+        if content_range:
+            # Content-Range: bytes 1024-2047/2048
+            try:
+                range_info = content_range.split('/')[-1]
+                if range_info != '*':
+                    expected_total_size = int(range_info)
+                    if actual_size != expected_total_size:
+                        os.remove(save_path)
+                        logger.warning(
+                            f"Resume download failed, url: {url}, "
+                            f"error: File download incomplete: expected {expected_total_size} bytes, "
+                            f"actual {actual_size} bytes"
+                        )
+                        raise CustomException(CustomError.DOWNLOAD_FILE_FAILED)
+            except (ValueError, IndexError) as e:
+                logger.warning(f"Failed to parse Content-Range header: {content_range}, error: {e}")
+    else:
+        # 全新下载时，检查Content-Length头
+        content_length = response.headers.get('Content-Length')
+        if content_length:
+            expected_size = int(content_length)
+            if actual_size != expected_size:
+                os.remove(save_path)
+                logger.warning(
+                    f"Download failed, url: {url}, "
+                    f"error: File download incomplete: expected {expected_size} bytes, "
+                    f"actual {actual_size} bytes"
+                )
+                raise CustomException(CustomError.DOWNLOAD_FILE_FAILED)
+
+
 def cos_upload_file(file_path: str) -> str:
     """
     上传文件到OSS
@@ -675,8 +954,378 @@ def cos_upload_file(file_path: str) -> str:
         )
         logger.info(f"COS upload success, response: {response}")
         # 2. 拼公开下载地址
-        public_url = f'https://{config.COS_BUCKET_NAME}.cos.{config.COS_REGION}.myqcloud.com/{key}'
+        public_url = f'http://{config.COS_BUCKET_NAME}.cos.{config.COS_REGION}.myqcloud.com/{key}'
         return public_url
     except Exception as e:
         logger.error(f"COS upload failed: {e}")
         raise CustomException(CustomError.INTERNAL_SERVER_ERROR, "COS upload failed")
+
+
+def _safe_remove_file(file_path: str) -> None:
+    """
+    安全删除文件，忽略删除错误
+    
+    Args:
+        file_path: 要删除的文件路径
+    """
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            logger.debug(f"Successfully removed file: {file_path}")
+    except Exception as e:
+        logger.warning(f"Failed to remove file {file_path}: {e}")
+
+
+def _assess_network_quality(url: str) -> str:
+    """
+    评估网络质量
+    
+    Args:
+        url: 测试URL
+    
+    Returns:
+        str: 网络质量 ('good', 'medium', 'poor')
+    """
+    try:
+        import urllib.parse
+        parsed_url = urllib.parse.urlparse(url)
+        test_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+        
+        start_time = time.time()
+        response = requests.head(
+            test_url,
+            timeout=(10, 5),  # 短超时测试
+            headers={'User-Agent': DOWNLOAD_HEADERS['User-Agent']}
+        )
+        response_time = time.time() - start_time
+        
+        if response_time < 1.0:
+            return 'good'
+        elif response_time < 3.0:
+            return 'medium'
+        else:
+            return 'poor'
+            
+    except Exception as e:
+        logger.warning(f"Failed to assess network quality: {e}")
+        return 'poor'  # 默认为较差的网络环境
+
+
+def _check_range_support_with_retry(url: str, max_retries: int = 2) -> bool:
+    """
+    带重试的范围请求支持检测
+    
+    Args:
+        url: 文件URL
+        max_retries: 最大重试次数
+    
+    Returns:
+        bool: 是否支持Range请求
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            response = requests.head(
+                url, 
+                timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT),
+                headers=DOWNLOAD_HEADERS
+            )
+            response.raise_for_status()
+            
+            accept_ranges = response.headers.get('Accept-Ranges', '').lower()
+            supports_ranges = accept_ranges == 'bytes'
+            
+            logger.info(f"Range support check attempt {attempt + 1}: Accept-Ranges={accept_ranges}, supports={supports_ranges}")
+            return supports_ranges
+            
+        except Exception as e:
+            if attempt < max_retries:
+                logger.warning(f"Range support check attempt {attempt + 1} failed: {e}, retrying...")
+                time.sleep(1)
+            else:
+                logger.warning(f"Failed to check range support after {max_retries + 1} attempts: {e}")
+                return False
+    
+    return False
+
+
+def _calculate_adaptive_timeouts(network_quality: str, base_timeout: int) -> dict:
+    """
+    根据网络质量计算自适应超时参数
+    
+    Args:
+        network_quality: 网络质量 ('good', 'medium', 'poor')
+        base_timeout: 基础超时时间
+    
+    Returns:
+        dict: 超时参数字典
+    """
+    if network_quality == 'good':
+        multiplier = 1.0
+        chunk_timeout_multiplier = 1.0
+    elif network_quality == 'medium':
+        multiplier = 1.5
+        chunk_timeout_multiplier = 2.0
+    else:  # poor
+        multiplier = 2.0
+        chunk_timeout_multiplier = 3.0
+    
+    return {
+        'connect_timeout': int(DEFAULT_CONNECT_TIMEOUT * multiplier),
+        'read_timeout': int(DEFAULT_READ_TIMEOUT * multiplier),
+        'total_timeout': int(base_timeout * multiplier),
+        'chunk_timeout': int(CHUNK_READ_TIMEOUT * chunk_timeout_multiplier)
+    }
+
+
+def _download_with_resume_enhanced(url: str, resume_pos: int, timeouts: dict) -> requests.Response:
+    """
+    增强版的断点续传下载
+    
+    Args:
+        url: 文件URL
+        resume_pos: 断点续传的起始位置
+        timeouts: 超时参数字典
+    
+    Returns:
+        requests.Response: HTTP响应对象
+    """
+    headers = DOWNLOAD_HEADERS.copy()
+    headers['Range'] = f'bytes={resume_pos}-'
+    
+    # 使用更长的超时时间和重试机制
+    session = requests.Session()
+    session.headers.update(headers)
+    
+    for attempt in range(3):  # 内部重试机制
+        try:
+            response = session.get(
+                url,
+                stream=True,
+                timeout=(timeouts['connect_timeout'], timeouts['read_timeout'])
+            )
+            
+            if response.status_code == 206:
+                logger.info(f"Resume download successful, status: {response.status_code}")
+                return response
+            elif response.status_code == 200:
+                logger.warning("Server returned 200 instead of 206, treating as fresh download")
+                return response
+            else:
+                response.raise_for_status()
+                
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            if attempt < 2:
+                logger.warning(f"Resume download attempt {attempt + 1} failed: {e}, retrying...")
+                time.sleep(CONNECTION_RETRY_DELAY)
+            else:
+                raise
+    
+    raise requests.exceptions.RequestException("Failed to establish resume connection after retries")
+
+
+def _download_fresh_enhanced(url: str, timeouts: dict) -> requests.Response:
+    """
+    增强版的全新下载
+    
+    Args:
+        url: 文件URL
+        timeouts: 超时参数字典
+    
+    Returns:
+        requests.Response: HTTP响应对象
+    """
+    session = requests.Session()
+    session.headers.update(DOWNLOAD_HEADERS)
+    
+    for attempt in range(3):  # 内部重试机制
+        try:
+            response = session.get(
+                url,
+                stream=True,
+                timeout=(timeouts['connect_timeout'], timeouts['read_timeout'])
+            )
+            response.raise_for_status()
+            return response
+            
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            if attempt < 2:
+                logger.warning(f"Fresh download attempt {attempt + 1} failed: {e}, retrying...")
+                time.sleep(CONNECTION_RETRY_DELAY)
+            else:
+                raise
+    
+    raise requests.exceptions.RequestException("Failed to establish fresh connection after retries")
+
+
+def _download_file_with_enhanced_stability(
+    response: requests.Response, 
+    save_path: str, 
+    limit: int, 
+    url: str, 
+    timeouts: dict,
+    existing_size: int = 0,
+    is_resume: bool = False
+) -> None:
+    """
+    增强稳定性的文件下载
+    
+    Args:
+        response: HTTP响应对象
+        save_path: 文件保存路径
+        limit: 文件大小限制
+        url: 文件URL
+        timeouts: 超时参数字典
+        existing_size: 已存在的文件大小
+        is_resume: 是否为断点续传
+    """
+    downloaded_size = existing_size
+    start_time = time.time()
+    last_chunk_time = start_time
+    last_progress_time = start_time
+    
+    file_mode = 'ab' if is_resume else 'wb'
+    
+    try:
+        with open(save_path, file_mode) as f:
+            for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                current_time = time.time()
+                
+                # 检查总体超时
+                if current_time - start_time > timeouts['total_timeout']:
+                    raise CustomException(
+                        CustomError.DOWNLOAD_FILE_TIMEOUT, 
+                        detail=f"下载超时，总耗时{current_time - start_time:.1f}秒"
+                    )
+                
+                # 检查单个块的读取超时（网络停滞检测）
+                if current_time - last_chunk_time > timeouts['chunk_timeout']:
+                    raise CustomException(
+                        CustomError.DOWNLOAD_FILE_FAILED, 
+                        detail=f"网络连接中断，单个数据块读取超时{timeouts['chunk_timeout']}秒"
+                    )
+                
+                if chunk:
+                    f.write(chunk)
+                    downloaded_size += len(chunk)
+                    last_chunk_time = current_time
+                    
+                    # 检查文件大小是否超过限制
+                    if downloaded_size > limit:
+                        raise CustomException(
+                            CustomError.FILE_SIZE_LIMIT_EXCEEDED, 
+                            detail=f"{limit / 1024 / 1024:.2f} MB"
+                        )
+                    
+                    # 更频繁的进度日志（5MB间隔）
+                    if current_time - last_progress_time >= 30:  # 每30秒记录一次
+                        logger.info(f"Downloaded {downloaded_size / 1024 / 1024:.1f}MB for {url}")
+                        last_progress_time = current_time
+                        
+    except requests.exceptions.ChunkedEncodingError as e:
+        raise CustomException(
+            CustomError.DOWNLOAD_FILE_FAILED, 
+            detail=f"数据传输错误：{str(e)}"
+        )
+    except Exception as e:
+        if isinstance(e, CustomException):
+            raise e
+        raise CustomException(
+            CustomError.DOWNLOAD_FILE_FAILED, 
+            detail=f"下载过程中发生错误：{str(e)}"
+        )
+
+
+def _classify_download_error(error: Exception) -> str:
+    """
+    分类下载错误类型
+    
+    Args:
+        error: 异常对象
+    
+    Returns:
+        str: 错误类型 ('network', 'server', 'fatal', 'unknown')
+    """
+    if isinstance(error, CustomException):
+        if error.err == CustomError.FILE_SIZE_LIMIT_EXCEEDED:
+            return 'fatal'
+        elif error.err == CustomError.DOWNLOAD_FILE_TIMEOUT:
+            return 'network'
+        else:
+            return 'server'
+    
+    if isinstance(error, (requests.exceptions.ConnectionError, 
+                         requests.exceptions.Timeout,
+                         requests.exceptions.ChunkedEncodingError)):
+        return 'network'
+    
+    if isinstance(error, requests.exceptions.HTTPError):
+        status_code = getattr(error.response, 'status_code', None)
+        if status_code in [500, 502, 503, 504]:  # 服务器错误
+            return 'server'
+        elif status_code in [404, 403, 401]:  # 客户端错误
+            return 'fatal'
+        else:
+            return 'server'
+    
+    return 'unknown'
+
+
+def _should_cleanup_on_error(error_category: str, supports_range: bool, consecutive_failures: int) -> bool:
+    """
+    决定错误后是否清理文件
+    
+    Args:
+        error_category: 错误类型
+        supports_range: 是否支持断点续传
+        consecutive_failures: 连续失败次数
+    
+    Returns:
+        bool: 是否应该清理文件
+    """
+    # 致命错误始终清理
+    if error_category == 'fatal':
+        return True
+    
+    # 不支持断点续传时清理
+    if not supports_range:
+        return True
+    
+    # 连续失败太多次时清理（可能是文件损坏）
+    if consecutive_failures >= 3:
+        return True
+    
+    # 网络和服务器错误保留文件
+    return False
+
+
+def _calculate_retry_delay(attempt: int, error_category: str, consecutive_failures: int) -> int:
+    """
+    计算重试等待时间
+    
+    Args:
+        attempt: 当前尝试次数
+        error_category: 错误类型
+        consecutive_failures: 连续失败次数
+    
+    Returns:
+        int: 等待时间（秒）
+    """
+    # 基础指数退避
+    base_delay = min(2 ** attempt, MAX_RETRY_DELAY)
+    
+    # 根据错误类型调整
+    if error_category == 'network':
+        # 网络错误需要更长的等待时间
+        multiplier = 1.5
+    elif error_category == 'server':
+        # 服务器错误稍微等待
+        multiplier = 1.2
+    else:
+        multiplier = 1.0
+    
+    # 连续失败次数调整
+    if consecutive_failures >= 3:
+        multiplier *= 1.5
+    
+    final_delay = min(int(base_delay * multiplier), MAX_RETRY_DELAY)
+    return max(final_delay, 1)  # 最少等待1秒

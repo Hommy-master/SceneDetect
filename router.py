@@ -15,7 +15,7 @@ def video_scene_split(video: schemas.VideoSceneSplitRequest):
     scene_list = service.video_scene_split(
         api_key=video.apiKey,
         video_url=str(video.video_url),
-        min_scene_length=video.min_scene_length,
+        threshold=video.threshold,
     )
 
     return schemas.VideoSceneSplitResponse(scene_list=scene_list)
