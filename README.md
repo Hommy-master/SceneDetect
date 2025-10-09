@@ -1,4 +1,4 @@
-# SceneDetect - 智能视频场景分割服务
+# SceneDetect - 视频镜头智能分割服务
 
 基于 PySceneDetect 的视频场景自动分割服务，支持按照内容变化智能切分视频片段。
 
@@ -47,7 +47,7 @@ scenedetect version
 
 ```bash
 # 克隆项目
-git clone <repository-url>
+git clone git@github.com:Hommy-master/SceneDetect.git
 cd SceneDetect
 
 # 安装依赖管理工具
@@ -62,7 +62,7 @@ uv sync
 创建 `.env` 文件（可选）：
 ```bash
 # 下载 URL 前缀（用于生成最终下载链接）
-DOWNLOAD_URL=https://assets.jcaigc.cn/
+DOWNLOAD_URL=https://scene-detect.jcaigc.cn/
 ```
 
 ### 4. 启动服务
@@ -75,8 +75,6 @@ uv run main.py
 uv run uvicorn main:app --host 0.0.0.0 --port 60000
 ```
 
-服务启动后，访问 http://localhost:60000/docs 查看 API 文档。
-
 ## 🐳 Docker 部署
 
 ### 快速部署
@@ -86,25 +84,11 @@ cd SceneDetect
 docker-compose pull && docker-compose up -d
 ```
 
-### 自定义部署
-
-```bash
-# 构建镜像
-docker build -t scenedetect .
-
-# 运行容器
-docker run -d \
-  --name scenedetect \
-  -p 60000:60000 \
-  -e DOWNLOAD_URL=https://your-domain.com/ \
-  scenedetect
-```
-
 ## 📖 API 文档
 
 ### 视频场景分割
 
-**接口地址**：`POST /openapi/v1/video/scene-split`
+**接口地址**：`POST https://scene-detect.jcaigc.cn/openapi/v1/video/scene-split`
 
 **功能说明**：根据视频内容变化自动分割场景，返回切分后的视频片段下载链接。
 
@@ -120,9 +104,8 @@ docker run -d \
 
 ```json
 {
-  "apiKey": "your-api-key",
-  "video_url": "https://example.com/video.mp4",
-  "min_scene_length": 2.0
+  "apiKey": "your-api-key", // 用户 apiKey，从官网：https://www.jcaigc.cn/ 获取
+  "video_url": "https://t.jcaigc.cn/scenedetect.mp4"
 }
 ```
 
@@ -132,7 +115,7 @@ docker run -d \
 |--------|------|----- |
 | `code` | int | 响应状态码，0 表示成功 |
 | `message` | string | 响应消息 |
-| `scene_list` | array | 分割后的视频片段下载链接列表 |
+| `data.scene_list` | array | 分割后的视频片段下载链接列表 |
 
 #### 成功响应示例
 
@@ -140,11 +123,13 @@ docker run -d \
 {
   "code": 0,
   "message": "success",
-  "scene_list": [
-    "https://assets.jcaigc.cn/video/scene/20231201120000_scene001.mp4",
-    "https://assets.jcaigc.cn/video/scene/20231201120000_scene002.mp4",
-    "https://assets.jcaigc.cn/video/scene/20231201120000_scene003.mp4"
-  ]
+  "data": {
+    "scene_list": [
+      "https://scene-detect.jcaigc.cn/output/video/20251009021840435c83ac-Scene-001.mp4",
+      "https://scene-detect.jcaigc.cn/output/video/20251009021840435c83ac-Scene-002.mp4",
+      "https://scene-detect.jcaigc.cn/output/video/20251009021840435c83ac-Scene-003.mp4"
+    ]
+  }
 }
 ```
 

@@ -22,9 +22,9 @@ for r in app.routes:
     # 1. 取 HTTP 方法列表
     methods = getattr(r, "methods", None) or [getattr(r, "method", "WS")]
     # 2. 取路径
-    path = r.path
-    # 3. 取函数名
-    name = r.name
+    path = getattr(r, "path", "N/A")
+    # 3. 取函数名（使用 getattr 安全访问，提供默认值）
+    name = getattr(r, "name", "Unknown")
     logger.info("Route: %s %s -> %s", ",".join(sorted(methods)), path, name)
 
 if __name__ == "__main__":
