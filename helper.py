@@ -108,7 +108,7 @@ def get_user_points(api_key: str) -> float:
         
         if code == 0:
             points = _extract_points_from_response(result)
-            logger.info(f"Successfully retrieved user points: {points} for API key: {api_key}")
+            logger.info(f"Successfully retrieved user points: {points} for API key: {api_key[:8]}***")
             return points
         elif code in (21002, 400):  # API Key无效
             logger.error(f"Invalid API key, result: {result}, code: {code}")
@@ -120,7 +120,7 @@ def get_user_points(api_key: str) -> float:
     except CustomException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error getting user points for API key {api_key}: {str(e)}")
+        logger.error(f"Unexpected error getting user points for API key {api_key[:8]}***: {str(e)}")
         raise CustomException(CustomError.UNKNOWN_ERROR, detail=f"Unknown error occurred while getting user points: {str(e)}")
 
 
@@ -150,7 +150,7 @@ def deduct_user_points(api_key: str, points: float, desc: str) -> bool:
         code = result.get('code', -1)
         
         if code == 0:
-            logger.info(f"Successfully deducted {points} points for API key {api_key}, reason: {desc}")
+            logger.info(f"Successfully deducted {points} points for API key {api_key[:8]}***, reason: {desc}")
             return True
         elif code in (21002, 400):  # API Key无效
             logger.error(f"Invalid API key for deduct points: {result}, code: {code}")
@@ -159,10 +159,10 @@ def deduct_user_points(api_key: str, points: float, desc: str) -> bool:
             logger.error(f"Failed to deduct points: {result}, code: {code}")
             return False
     except CustomException as e:
-        logger.warning(f"Deduct points failed, API key: {api_key}, error: {str(e)}")
+        logger.warning(f"Deduct points failed, API key: {api_key[:8]}***, error: {str(e)}")
         return False
     except Exception as e:
-        logger.error(f"Unexpected error deducting points for API key {api_key}: {str(e)}")
+        logger.error(f"Unexpected error deducting points for API key {api_key[:8]}***: {str(e)}")
         return False
 
 
