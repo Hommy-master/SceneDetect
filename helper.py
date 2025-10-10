@@ -72,6 +72,186 @@ def download(url: str, save_dir: str, limit: int = DEFAULT_FILE_SIZE_LIMIT,
     return _execute_download_with_retry(download_context, limit, retry)
 
 
+def gen_unique_id() -> str:
+    """
+    生成唯一ID
+    
+    Returns:
+        str: 时间戳 + UUID的唯一标识符
+    """
+    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+    unique_id = uuid.uuid4().hex[:8]
+    return f"{timestamp}{unique_id}"
+
+
+def get_user_points(api_key: str) -> float:
+    """
+    根据API Key获取用户积分
+    
+    Args:
+        api_key: 用户的API Key
+    
+    Returns:
+        float: 用户当前积分
+    
+    Raises:
+        CustomException: 当获取积分失败时
+    """
+    try:
+        # 调用获取积分API
+        params = {'apiKey': api_key}
+        result = _call_user_api('GET', '/points', params=params)
+        
+        # 检查响应码并处理结果
+        code = result.get('code', -1)
+        
+        if code == 0:
+            points = _extract_points_from_response(result)
+            logger.info(f"Successfully retrieved user points: {points} for API key: {api_key}")
+            return points
+        elif code in (21002, 400):  # API Key无效
+            logger.error(f"Invalid API key, result: {result}, code: {code}")
+            raise CustomException(CustomError.INVALID_APIKEY, detail=f"{api_key}")
+        else:
+            logger.error(f"Failed to get user points: {result}, code: {code}")
+            raise CustomException(CustomError.UNKNOWN_ERROR, detail=f"Unknown error occurred while getting user points: {result}, code: {code}")
+            
+    except CustomException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error getting user points for API key {api_key}: {str(e)}")
+        raise CustomException(CustomError.UNKNOWN_ERROR, detail=f"Unknown error occurred while getting user points: {str(e)}")
+
+
+def deduct_user_points(api_key: str, points: float, desc: str) -> bool:
+    """
+    根据API Key减少用户积分
+    
+    Args:
+        api_key: 用户的API Key
+        points: 要减少的积分数量（必须为正数）
+        desc: 减少积分的原因描述
+    
+    Returns:
+        bool: True表示扣减成功，False表示失败
+    Raises:
+        CustomException: 仅当apiKey无效时抛出异常
+    """
+    try:
+        # 调用扣减积分API
+        json_data = {
+            'apiKey': api_key,
+            'points': float(points),
+            'desc': desc.strip()
+        }
+        
+        result = _call_user_api('POST', '/points/deduct', json_data=json_data)
+        code = result.get('code', -1)
+        
+        if code == 0:
+            logger.info(f"Successfully deducted {points} points for API key {api_key}, reason: {desc}")
+            return True
+        elif code in (21002, 400):  # API Key无效
+            logger.error(f"Invalid API key for deduct points: {result}, code: {code}")
+            raise CustomException(CustomError.INVALID_APIKEY, detail=f"{api_key}")
+        else:
+            logger.error(f"Failed to deduct points: {result}, code: {code}")
+            return False
+    except CustomException as e:
+        logger.warning(f"Deduct points failed, API key: {api_key}, error: {str(e)}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error deducting points for API key {api_key}: {str(e)}")
+        return False
+
+
+def cleanup_temp_file(temp_file_path: Optional[str]) -> None:
+    """
+    清理临时文件
+    
+    Args:
+        temp_file_path: 临时文件路径，可能为None
+    """
+    if temp_file_path and os.path.exists(temp_file_path):
+        try:
+            os.remove(temp_file_path)
+            logger.info(f"Temporary file removed: {temp_file_path}")
+        except Exception as cleanup_error:
+            logger.warning(f"Failed to cleanup temporary file {temp_file_path}: {cleanup_error}")
+
+
+def get_video_duration(file_path: str) -> int:
+    """
+    获取音/视频时长
+    
+    Args:
+        file_path: 音/视频文件路径
+    
+    Returns:
+        int: 音/视频时长，单位：秒
+    
+    Raises:
+        CustomException: 音/视频分析失败
+    """
+    logger.info(f"Using ffprobe to analyze file: {file_path}")
+    
+    try:
+        # 构建并执行ffprobe命令
+        ffprobe_data = _run_ffprobe_command(file_path)
+        
+        # 提取时长信息
+        duration_seconds = _extract_duration_from_ffprobe_data(ffprobe_data)
+        
+        # 验证并返回时长
+        return int(duration_seconds)
+        
+    except UnicodeDecodeError as e:
+        logger.warning(f"FFprobe output encoding issue: {e}, trying binary mode")
+        return _analyze_audio_with_ffprobe_binary(file_path)
+    except subprocess.TimeoutExpired:
+        logger.error("FFprobe command timed out")
+        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, "Audio analysis timed out")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFprobe command failed with return code {e.returncode}")
+        logger.error(f"FFprobe stderr: {e.stderr}")
+        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, f"FFprobe analysis failed: {e.stderr}")
+    except FileNotFoundError:
+        logger.error("FFprobe command not found. Please ensure FFprobe is installed and in PATH")
+        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, "FFprobe tool not available")
+
+
+def cos_upload_file(file_path: str) -> str:
+    """
+    上传文件到OSS
+    
+    Args:
+        file_path: 文件路径
+
+    Returns:
+        str: 对象URL
+    
+    Raises:
+        CustomException: 上传失败
+    """
+    cfg = CosConfig(Region=config.COS_REGION, SecretId=config.COS_SECRET_ID, SecretKey=config.COS_SECRET_KEY, Token=None)
+    cli = CosS3Client(cfg)
+    try:
+        # 1. 上传文件
+        key = os.path.basename(file_path)
+        response = cli.put_object_from_local_file(
+            Bucket=config.COS_BUCKET_NAME, 
+            LocalFilePath=file_path,
+            Key=key       
+        )
+        logger.info(f"COS upload success, response: {response}")
+        # 2. 拼公开下载地址
+        public_url = f'http://{config.COS_BUCKET_NAME}.cos.{config.COS_REGION}.myqcloud.com/{key}'
+        return public_url
+    except Exception as e:
+        logger.error(f"COS upload failed: {e}")
+        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, "COS upload failed")
+        
+
 def _prepare_download_context(url: str, save_dir: str, timeout: int) -> dict:
     """
     准备下载上下文信息
@@ -316,17 +496,6 @@ def _handle_final_failure(last_exception: Optional[Exception], url: str) -> str:
     logger.error(f"All retries failed, URL: {url}, last error: {error_detail}")
     raise CustomException(CustomError.DOWNLOAD_FILE_FAILED)
 
-def gen_unique_id() -> str:
-    """
-    生成唯一ID
-    
-    Returns:
-        str: 时间戳 + UUID的唯一标识符
-    """
-    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-    unique_id = uuid.uuid4().hex[:8]
-    return f"{timestamp}{unique_id}"
-
 
 def _determine_file_path_with_extension(response: requests.Response, save_path: str) -> str:
     """
@@ -345,101 +514,6 @@ def _determine_file_path_with_extension(response: requests.Response, save_path: 
     if extension:
         return save_path + extension
     return save_path
-
-
-def _download_file_with_timeout_and_size_check(response: requests.Response, save_path: str, limit: int, url: str, total_timeout: int) -> None:
-    """
-    下载文件并实时检查文件大小，支持超时检测
-    
-    Args:
-        response: HTTP响应对象
-        save_path: 文件保存路径
-        limit: 文件大小限制
-        url: 文件URL（用于日志）
-        total_timeout: 总超时时间（秒）
-    
-    Raises:
-        CustomException: 文件大小超限或下载超时时抛出
-    """
-    downloaded_size = 0
-    start_time = time.time()
-    last_chunk_time = start_time
-    
-    with open(save_path, 'wb') as f:
-        try:
-            for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
-                current_time = time.time()
-                
-                # 检查总体超时
-                if current_time - start_time > total_timeout:
-                    raise CustomException(
-                        CustomError.DOWNLOAD_FILE_TIMEOUT, 
-                        detail=f"下载超时，总耗时{current_time - start_time:.1f}秒，超过{total_timeout}秒限制"
-                    )
-                
-                # 检查单个块的读取超时（网络停滞检测）
-                if current_time - last_chunk_time > CHUNK_READ_TIMEOUT:
-                    raise CustomException(
-                        CustomError.DOWNLOAD_FILE_FAILED, 
-                        detail=f"网络连接中断，单个数据块读取超时{CHUNK_READ_TIMEOUT}秒"
-                    )
-                
-                if chunk:
-                    f.write(chunk)
-                    downloaded_size += len(chunk)
-                    last_chunk_time = current_time
-                    
-                    # 检查文件大小是否超过限制
-                    if downloaded_size > limit:
-                        f.close()
-                        os.remove(save_path)
-                        
-                        limit_mb = limit / 1024 / 1024
-                        logger.info(f"Download failed, url: {url}, error: File size exceeds the limit of {limit_mb:.2f}MB")
-                        raise CustomException(CustomError.FILE_SIZE_LIMIT_EXCEEDED, detail=f"{limit_mb:.2f} MB")
-                    
-                    # 每下载10MB记录一次进度（避免日志过多）
-                    if downloaded_size % (10 * 1024 * 1024) == 0:
-                        logger.info(f"Downloaded {downloaded_size / 1024 / 1024:.1f}MB for {url}")
-                        
-        except requests.exceptions.ChunkedEncodingError as e:
-            raise CustomException(
-                CustomError.DOWNLOAD_FILE_FAILED, 
-                detail=f"Data transfer error: {str(e)}"
-            )
-        except Exception as e:
-            # 如果是我们自己的异常，直接重新抛出
-            if isinstance(e, CustomException):
-                raise e
-            # 其他异常包装为下载失败
-            raise CustomException(
-                CustomError.DOWNLOAD_FILE_FAILED, 
-                detail=f"Error occurred during download: {str(e)}"
-            )
-
-
-def _validate_download_integrity(response: requests.Response, save_path: str, url: str) -> None:
-    """
-    验证下载文件的完整性
-    
-    Args:
-        response: HTTP响应对象
-        save_path: 文件保存路径
-        url: 文件URL（用于日志）
-    
-    Raises:
-        CustomException: 文件不完整时抛出
-    """
-    content_length = response.headers.get('Content-Length')
-    
-    if content_length:
-        expected_size = int(content_length)
-        actual_size = os.path.getsize(save_path)
-        
-        if actual_size != expected_size:
-            os.remove(save_path)
-            logger.warning(f"Download failed, url: {url}, error: File download incomplete: expected {expected_size} bytes, actual {actual_size} bytes")
-            raise CustomException(CustomError.DOWNLOAD_FILE_FAILED)
 
 
 def _extract_points_from_response(result: Dict[str, Any]) -> float:
@@ -462,86 +536,6 @@ def _extract_points_from_response(result: Dict[str, Any]) -> float:
         logger.error(f"Invalid points format in API response, result: {result}")
         raise CustomException(CustomError.INTERNAL_SERVER_ERROR, detail="Points format error")
 
-
-def get_user_points(api_key: str) -> float:
-    """
-    根据API Key获取用户积分
-    
-    Args:
-        api_key: 用户的API Key
-    
-    Returns:
-        float: 用户当前积分
-    
-    Raises:
-        CustomException: 当获取积分失败时
-    """
-    try:
-        # 调用获取积分API
-        params = {'apiKey': api_key}
-        result = _call_user_api('GET', '/points', params=params)
-        
-        # 检查响应码并处理结果
-        code = result.get('code', -1)
-        
-        if code == 0:
-            points = _extract_points_from_response(result)
-            logger.info(f"Successfully retrieved user points: {points} for API key: {api_key}")
-            return points
-        elif code in (21002, 400):  # API Key无效
-            logger.error(f"Invalid API key, result: {result}, code: {code}")
-            raise CustomException(CustomError.INVALID_APIKEY, detail=f"{api_key}")
-        else:
-            logger.error(f"Failed to get user points: {result}, code: {code}")
-            raise CustomException(CustomError.UNKNOWN_ERROR, detail=f"Unknown error occurred while getting user points: {result}, code: {code}")
-            
-    except CustomException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error getting user points for API key {api_key}: {str(e)}")
-        raise CustomException(CustomError.UNKNOWN_ERROR, detail=f"Unknown error occurred while getting user points: {str(e)}")
-
-
-def deduct_user_points(api_key: str, points: float, desc: str) -> bool:
-    """
-    根据API Key减少用户积分
-    
-    Args:
-        api_key: 用户的API Key
-        points: 要减少的积分数量（必须为正数）
-        desc: 减少积分的原因描述
-    
-    Returns:
-        bool: True表示扣减成功，False表示失败
-    Raises:
-        CustomException: 仅当apiKey无效时抛出异常
-    """
-    try:
-        # 调用扣减积分API
-        json_data = {
-            'apiKey': api_key,
-            'points': float(points),
-            'desc': desc.strip()
-        }
-        
-        result = _call_user_api('POST', '/points/deduct', json_data=json_data)
-        code = result.get('code', -1)
-        
-        if code == 0:
-            logger.info(f"Successfully deducted {points} points for API key {api_key}, reason: {desc}")
-            return True
-        elif code in (21002, 400):  # API Key无效
-            logger.error(f"Invalid API key for deduct points: {result}, code: {code}")
-            raise CustomException(CustomError.INVALID_APIKEY, detail=f"{api_key}")
-        else:
-            logger.error(f"Failed to deduct points: {result}, code: {code}")
-            return False
-    except CustomException as e:
-        logger.warning(f"Deduct points failed, API key: {api_key}, error: {str(e)}")
-        return False
-    except Exception as e:
-        logger.error(f"Unexpected error deducting points for API key {api_key}: {str(e)}")
-        return False
 
 def _parse_api_response(response: requests.Response) -> Dict[str, Any]:
     """
@@ -612,46 +606,6 @@ def _call_user_api(method: str, endpoint: str, params: Optional[dict] = None, js
     except Exception as e:
         logger.error(f"Unexpected error in user API call: {method} {url}, error: {str(e)}")
         raise CustomException(CustomError.UNKNOWN_ERROR, detail=f"Unknown error occurred while calling user API: {str(e)}")
-
-
-def get_video_duration(file_path: str) -> int:
-    """
-    获取音/视频时长
-    
-    Args:
-        file_path: 音/视频文件路径
-    
-    Returns:
-        int: 音/视频时长，单位：秒
-    
-    Raises:
-        CustomException: 音/视频分析失败
-    """
-    logger.info(f"Using ffprobe to analyze file: {file_path}")
-    
-    try:
-        # 构建并执行ffprobe命令
-        ffprobe_data = _run_ffprobe_command(file_path)
-        
-        # 提取时长信息
-        duration_seconds = _extract_duration_from_ffprobe_data(ffprobe_data)
-        
-        # 验证并返回时长
-        return int(duration_seconds)
-        
-    except UnicodeDecodeError as e:
-        logger.warning(f"FFprobe output encoding issue: {e}, trying binary mode")
-        return _analyze_audio_with_ffprobe_binary(file_path)
-    except subprocess.TimeoutExpired:
-        logger.error("FFprobe command timed out")
-        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, "Audio analysis timed out")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"FFprobe command failed with return code {e.returncode}")
-        logger.error(f"FFprobe stderr: {e.stderr}")
-        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, f"FFprobe analysis failed: {e.stderr}")
-    except FileNotFoundError:
-        logger.error("FFprobe command not found. Please ensure FFprobe is installed and in PATH")
-        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, "FFprobe tool not available")
 
 
 def _run_ffprobe_command(file_path: str) -> Dict[str, Any]:
@@ -756,21 +710,6 @@ def _extract_duration_from_ffprobe_data(ffprobe_data: Dict[str, Any]) -> float:
     raise CustomException(CustomError.INTERNAL_SERVER_ERROR, "Unable to extract duration from audio file")
 
 
-def cleanup_temp_file(temp_file_path: Optional[str]) -> None:
-    """
-    清理临时文件
-    
-    Args:
-        temp_file_path: 临时文件路径，可能为None
-    """
-    if temp_file_path and os.path.exists(temp_file_path):
-        try:
-            os.remove(temp_file_path)
-            logger.info(f"Temporary file removed: {temp_file_path}")
-        except Exception as cleanup_error:
-            logger.warning(f"Failed to cleanup temporary file {temp_file_path}: {cleanup_error}")
-
-
 def _analyze_audio_with_ffprobe_binary(file_path: str) -> int:
     """
     使用二进制模式执行ffprobe，解决编码问题
@@ -850,175 +789,6 @@ def _decode_ffprobe_output(stdout_bytes: bytes) -> str:
     return stdout_text
 
 
-def _check_range_support(url: str) -> bool:
-    """
-    检查服务器是否支持断点续传（Range请求）
-    
-    Args:
-        url: 文件URL
-    
-    Returns:
-        bool: True表示支持Range请求，False表示不支持
-    """
-    try:
-        # 发送HEAD请求检查服务器支持
-        response = requests.head(
-            url, 
-            timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT),
-            headers=DOWNLOAD_HEADERS
-        )
-        response.raise_for_status()
-        
-        # 检查Accept-Ranges头
-        accept_ranges = response.headers.get('Accept-Ranges', '').lower()
-        supports_ranges = accept_ranges == 'bytes'
-        
-        logger.info(f"Range support check for {url}: Accept-Ranges={accept_ranges}, supports={supports_ranges}")
-        return supports_ranges
-        
-    except Exception as e:
-        logger.warning(f"Failed to check range support for {url}: {str(e)}, assuming no support")
-        return False
-
-
-def _download_with_resume(url: str, resume_pos: int, timeout: int) -> requests.Response:
-    """
-    使用断点续传下载文件
-    
-    Args:
-        url: 文件URL
-        resume_pos: 断点续传的起始位置（字节）
-        timeout: 超时时间
-    
-    Returns:
-        requests.Response: HTTP响应对象
-    """
-    headers = DOWNLOAD_HEADERS.copy()
-    headers['Range'] = f'bytes={resume_pos}-'
-    
-    response = requests.get(
-        url,
-        stream=True,
-        timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT),
-        headers=headers
-    )
-    
-    # 断点续传应该返回206状态码
-    if response.status_code == 206:
-        logger.info(f"Resume download successful, status: {response.status_code}")
-    elif response.status_code == 200:
-        logger.warning("Server returned 200 instead of 206, might not support resume")
-    else:
-        response.raise_for_status()
-    
-    return response
-
-
-def _download_fresh(url: str, timeout: int) -> requests.Response:
-    """
-    全新下载文件
-    
-    Args:
-        url: 文件URL
-        timeout: 超时时间
-    
-    Returns:
-        requests.Response: HTTP响应对象
-    """
-    response = requests.get(
-        url,
-        stream=True,
-        timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT),
-        headers=DOWNLOAD_HEADERS
-    )
-    response.raise_for_status()
-    return response
-
-
-def _download_file_with_resume_support(
-    response: requests.Response, 
-    save_path: str, 
-    limit: int, 
-    url: str, 
-    total_timeout: int,
-    existing_size: int = 0,
-    is_resume: bool = False
-) -> None:
-    """
-    下载文件并实时检查文件大小，支持断点续传和超时检测
-    
-    Args:
-        response: HTTP响应对象
-        save_path: 文件保存路径
-        limit: 文件大小限制
-        url: 文件URL（用于日志）
-        total_timeout: 总超时时间（秒）
-        existing_size: 已存在的文件大小（断点续传时使用）
-        is_resume: 是否为断点续传
-    
-    Raises:
-        CustomException: 文件大小超限或下载超时时抛出
-    """
-    downloaded_size = existing_size  # 断点续传时从已下载大小开始
-    start_time = time.time()
-    last_chunk_time = start_time
-    
-    # 断点续传时使用追加模式，否则使用覆盖模式
-    file_mode = 'ab' if is_resume else 'wb'
-    
-    with open(save_path, file_mode) as f:
-        try:
-            for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
-                current_time = time.time()
-                
-                # 检查总体超时
-                if current_time - start_time > total_timeout:
-                    raise CustomException(
-                        CustomError.DOWNLOAD_FILE_TIMEOUT, 
-                        detail=f"下载超时，总耗时{current_time - start_time:.1f}秒，超过{total_timeout}秒限制"
-                    )
-                
-                # 检查单个块的读取超时（网络停滞检测）
-                if current_time - last_chunk_time > CHUNK_READ_TIMEOUT:
-                    raise CustomException(
-                        CustomError.DOWNLOAD_FILE_FAILED, 
-                        detail=f"网络连接中断，单个数据块读取超时{CHUNK_READ_TIMEOUT}秒"
-                    )
-                
-                if chunk:
-                    f.write(chunk)
-                    downloaded_size += len(chunk)
-                    last_chunk_time = current_time
-                    
-                    # 检查文件大小是否超过限制
-                    if downloaded_size > limit:
-                        f.close()
-                        os.remove(save_path)
-                        
-                        limit_mb = limit / 1024 / 1024
-                        logger.info(f"Download failed, url: {url}, error: File size exceeds the limit of {limit_mb:.2f}MB")
-                        raise CustomException(CustomError.FILE_SIZE_LIMIT_EXCEEDED, detail=f"{limit_mb:.2f} MB")
-                    
-                    # 每下载10MB记录一次进度（避免日志过多）
-                    if downloaded_size % (10 * 1024 * 1024) == 0:
-                        logger.info(f"Downloaded {downloaded_size / 1024 / 1024:.1f}MB for {url}")
-                        
-        except requests.exceptions.ChunkedEncodingError as e:
-            raise CustomException(
-                CustomError.DOWNLOAD_FILE_FAILED, 
-                detail=f"Data transfer error: {str(e)}"
-            )
-        except Exception as e:
-            # 如果是我们自己的异常，直接重新抛出
-            if isinstance(e, CustomException):
-                raise e
-            # 其他异常包装为下载失败
-            raise CustomException(
-                CustomError.DOWNLOAD_FILE_FAILED, 
-                detail=f"Error occurred during download: {str(e)}"
-            )
-
-
 def _validate_download_integrity_with_resume(
     response: requests.Response, 
     save_path: str, 
@@ -1071,38 +841,6 @@ def _validate_download_integrity_with_resume(
                     f"actual {actual_size} bytes"
                 )
                 raise CustomException(CustomError.DOWNLOAD_FILE_FAILED)
-
-
-def cos_upload_file(file_path: str) -> str:
-    """
-    上传文件到OSS
-    
-    Args:
-        file_path: 文件路径
-
-    Returns:
-        str: 对象URL
-    
-    Raises:
-        CustomException: 上传失败
-    """
-    cfg = CosConfig(Region=config.COS_REGION, SecretId=config.COS_SECRET_ID, SecretKey=config.COS_SECRET_KEY, Token=None)
-    cli = CosS3Client(cfg)
-    try:
-        # 1. 上传文件
-        key = os.path.basename(file_path)
-        response = cli.put_object_from_local_file(
-            Bucket=config.COS_BUCKET_NAME, 
-            LocalFilePath=file_path,
-            Key=key       
-        )
-        logger.info(f"COS upload success, response: {response}")
-        # 2. 拼公开下载地址
-        public_url = f'http://{config.COS_BUCKET_NAME}.cos.{config.COS_REGION}.myqcloud.com/{key}'
-        return public_url
-    except Exception as e:
-        logger.error(f"COS upload failed: {e}")
-        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, "COS upload failed")
 
 
 def _safe_remove_file(file_path: str) -> None:
