@@ -285,6 +285,9 @@ docker logs -f scenedetect
 欢迎提交 Issue 和 Pull Request！
 
 ## 📞 支持
+官网：https://www.jcaigc.cn/
+
+扣子插件链接：https://www.coze.cn/store/plugin/7552503057066721315?from=store_search_suggestion
 
 如有问题，请联系：taohongmin51@gmail.com
 
