@@ -159,7 +159,7 @@ def video_scene_split(
         
         # 步骤7：生成下载链接并返回
         download_urls = gen_download_urls(output_files)
-        logger.info(f"Video scene split completed, generated {len(download_urls)} video segments")
+        logger.info(f"Video processing completed successfully, generated {len(download_urls)} video segments")
         return download_urls
     
     finally:

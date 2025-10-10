@@ -1,8 +1,26 @@
 import logging
 from logging.config import dictConfig
 import os
+from contextvars import ContextVar
+import uuid
 
-class RelativePathFormatter(logging.Formatter):
+from typing import Optional
+
+# Context variable for storing trace ID
+trace_id_context: ContextVar[str] = ContextVar('trace_id', default='')
+
+def get_trace_id() -> str:
+    """Get current trace ID from context"""
+    return trace_id_context.get()
+
+def set_trace_id(trace_id: Optional[str] = None) -> str:
+    """Set trace ID in context, generate new one if not provided"""
+    if trace_id is None:
+        trace_id = str(uuid.uuid4())[:8]
+    trace_id_context.set(trace_id)
+    return trace_id
+
+class TraceIdFormatter(logging.Formatter):
     def __init__(self, *args, project_root: str = "", **kwargs):
         super().__init__(*args, **kwargs)
         # 把项目根目录传进来
@@ -10,6 +28,7 @@ class RelativePathFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         record.rel_path = os.path.relpath(record.pathname, self.project_root)
+        record.trace_id = get_trace_id() or 'unknown'
         return super().format(record)
 
 LOGGING_CONFIG = {
@@ -17,8 +36,8 @@ LOGGING_CONFIG = {
     "disable_existing_loggers": False,
     "formatters": {
         "default": {
-            "()": RelativePathFormatter,
-            "fmt": "%(asctime)s.%(msecs)03d | %(levelname)s | %(name)s | %(rel_path)s:%(lineno)d | %(message)s",
+            "()": TraceIdFormatter,
+            "fmt": "%(asctime)s.%(msecs)03d | %(levelname)s | %(trace_id)s | %(name)s | %(rel_path)s:%(lineno)d | %(message)s",
             "datefmt": "%Y-%m-%d %H:%M:%S",
         },
     },

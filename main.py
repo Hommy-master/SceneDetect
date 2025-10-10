@@ -11,6 +11,7 @@ app = FastAPI(title="SceneDetect API", description="视频场景分割服务")
 app.include_router(router.router, prefix="/openapi", tags=["SceneDetect"])
 
 # 添加中间件（注意注册顺序：后注册的中间件先执行）
+app.add_middleware(middlewares.TraceMiddleware)  # 追踪ID中间件（最先执行）
 app.add_middleware(middlewares.PrepareMiddleware)  # 请求准备中间件
 app.add_middleware(middlewares.ResponseMiddleware)  # 统一响应处理中间件
 app.add_middleware(middlewares.TimeoutMiddleware, timeout_seconds=600)  # 超时处理中间件

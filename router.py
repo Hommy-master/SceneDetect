@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 import schemas
 import service
+from logger import logger
 
 
 # 创建路由器实例，定义API版本前缀
@@ -20,13 +21,19 @@ def video_scene_split(video: schemas.VideoSceneSplitRequest):
         VideoSceneSplitResponse: 包含分割后视频片段链接列表的响应
     """
     
+    # 记录API调用开始
+    logger.info("Video scene split API called")
+    
     # 调用service层处理业务逻辑
     scene_list = service.video_scene_split(
         api_key=video.apiKey,
         video_url=str(video.video_url),
         threshold=video.threshold,
     )
-
+    
+    # 记录API调用结束
+    logger.info("Video scene split API completed successfully")
+    
     return schemas.VideoSceneSplitResponse(scene_list=scene_list)
 
 # 健康检查端点

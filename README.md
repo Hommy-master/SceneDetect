@@ -216,6 +216,75 @@ curl -X POST "http://localhost:60000/openapi/v1/video/scene-split" \
 - 处理前会验证用户积分余额
 - 处理成功后自动扣除相应积分
 
+## ✨ 新增功能：请求跟踪ID (Trace ID)
+
+为了增强代码可调试性，方便问题排查，项目新增了HTTP请求跟踪ID功能：
+
+### 🔍 功能特点
+
+- **唯一标识**：每个HTTP请求都会生成一个唯一的8位trace_id
+- **全链路跟踪**：一次请求产生的所有日志都包含相同的trace_id
+- **自动注入**：无需修改现有日志代码，自动在所有logger输出中添加trace_id
+- **便于排查**：可以根据trace_id快速定位单次请求的完整执行轨迹
+
+### 📋 日志格式
+
+```
+2024-01-01 12:00:00.123 | INFO | a1b2c3d4 | main | service.py:123 | Starting video scene split processing
+```
+
+日志格式说明：
+- `时间戳` | `日志级别` | `trace_id` | `模块名` | `文件:行号` | `日志消息`
+
+### 🛠️ 实现原理
+
+1. **TraceMiddleware**：请求开始时生成trace_id并设置到上下文
+2. **ContextVar**：使用Python的contextvars存储trace_id
+3. **TraceIdFormatter**：日志格式化器自动从上下文获取trace_id并注入到每条日志
+4. **无侵入设计**：不需要修改现有的logger调用代码，自动在所有日志中加入trace_id
+
+### 🔧 关键日志点
+
+系统在以下关键点自动记录带trace_id的日志：
+
+- HTTP请求开始和结束
+- 视频下载开始和完成
+- 场景分割处理过程
+- 用户积分验证和扣减
+- 异常和错误处理
+- API调用成功和失败
+
+### 📊 使用示例
+
+```bash
+# 根据trace_id过滤日志
+grep "a1b2c3d4" application.log
+
+# 查看特定请求的完整处理过程
+2024-01-01 12:00:00.123 | INFO | a1b2c3d4 | middlewares | Request started: POST /openapi/v1/video/scene-split
+2024-01-01 12:00:00.124 | INFO | a1b2c3d4 | router | Video scene split API called
+2024-01-01 12:00:00.125 | INFO | a1b2c3d4 | service | Starting video scene split processing
+2024-01-01 12:00:05.456 | INFO | a1b2c3d4 | helper | Download completed successfully
+2024-01-01 12:00:15.789 | INFO | a1b2c3d4 | service | Video processing completed successfully
+2024-01-01 12:00:15.790 | INFO | a1b2c3d4 | middlewares | Request completed: POST /openapi/v1/video/scene-split - Status: 200
+```
+
+### 📝 代码示例
+
+现在你只需要正常使用logger，不需要显式添加trace_id：
+
+```python
+# 这样的代码就足够了
+logger.info("Starting video scene split processing")
+logger.error("Download failed")
+logger.warning("User points insufficient")
+
+# 不需要这样显式添加trace_id（错误做法）
+# logger.info(f"Starting video processing, trace_id: {get_trace_id()}")
+```
+
+---
+
 ## 🔧 开发说明
 
 ### 项目结构

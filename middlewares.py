@@ -2,11 +2,38 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from exceptions import CustomError, CustomException
 from starlette.middleware.base import BaseHTTPMiddleware
-from logger import logger
+from logger import logger, get_trace_id, set_trace_id
 import json
 import os
 import config
 import asyncio
+
+
+class TraceMiddleware(BaseHTTPMiddleware):
+    """Trace ID middleware
+    功能：
+    1. 为每个HTTP请求生成唯一的trace_id
+    2. 将trace_id设置到context中供日志使用
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        # 生成trace_id并设置到context
+        trace_id = set_trace_id()
+        
+        # 记录请求开始日志
+        logger.info(f"Request started: {request.method} {request.url}")
+        
+        try:
+            response = await call_next(request)
+            
+            # 记录请求完成日志
+            logger.info(f"Request completed: {request.method} {request.url} - Status: {response.status_code}")
+            
+            return response
+        except Exception as e:
+            # 记录请求异常日志
+            logger.error(f"Request failed: {request.method} {request.url} - Error: {str(e)}")
+            raise
 
 
 class PrepareMiddleware(BaseHTTPMiddleware):
