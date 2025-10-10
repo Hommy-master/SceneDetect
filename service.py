@@ -234,7 +234,7 @@ def _deduct_user_points_if_possible(user_points: float, api_key: str, price: flo
     """
     # 仅在积分查询成功时才执行扣减操作
     if user_points > MIN_POINTS_THRESHOLD:
-        success = helper.deduct_user_points(api_key, price, 'Video scene split service call')
+        success = helper.deduct_user_points(api_key, price, '调用按镜头切分视频')
         if success:
             logger.info(f"Successfully deducted points: {price:.2f}, API Key: {api_key[:8]}***")
         else:
