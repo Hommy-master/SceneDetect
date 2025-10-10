@@ -6,7 +6,8 @@ import uuid
 import subprocess
 import json
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+import traceback
 
 from logger import logger
 from exceptions import CustomException, CustomError
@@ -250,7 +251,55 @@ def cos_upload_file(file_path: str) -> str:
     except Exception as e:
         logger.error(f"COS upload failed: {e}")
         raise CustomException(CustomError.INTERNAL_SERVER_ERROR, "COS upload failed")
-        
+
+def gen_download_url(file_path: str) -> str:
+    """
+    生成下载 URL，将文件路径中的 /app/ 替换成 DOWNLOAD_URL
+    
+    Args:
+        file_path: 文件路径
+    
+    Returns:
+        str: 下载 URL
+    """
+    # 1. 如果没有COS配置，则使用本地存储
+    if config.COS_BUCKET_NAME == "" or config.COS_SECRET_ID == "" \
+        or config.COS_SECRET_KEY == "" or config.COS_REGION == "":
+        # 2. 替换文件路径中的 /app/ 为 DOWNLOAD_URL
+        download_url = file_path.replace("/app/", config.DOWNLOAD_URL)
+        logger.debug(f"Generated download URL: {file_path} -> {download_url}")
+        return download_url        
+
+    # 2. 如果有COS配置，则使用COS
+    try:
+        # 上传文件
+        download_url = cos_upload_file(file_path)
+        # 删除临时文件
+        cleanup_temp_file(file_path)
+        return download_url
+    except Exception as e:
+        logger.info(f"Failed to upload file to COS, file_path: {file_path}, detail: {traceback.format_exc()}")
+
+    # 3. 兜底：使用本地存储，替换文件路径中的 /app/ 为 DOWNLOAD_URL
+    download_url = file_path.replace("/app/", config.DOWNLOAD_URL)
+    logger.debug(f"Generated download URL: {file_path} -> {download_url}")
+    return download_url    
+
+
+def gen_download_urls(files: List[str]) -> List[str]:
+    """
+    批量生成下载 URL
+    
+    Args:
+        files: 文件路径列表
+    
+    Returns:
+        List[str]: 下载 URL 列表
+    """
+    download_urls = [gen_download_url(file) for file in files]
+    logger.info(f"Generated {len(download_urls)} download URLs from {len(files)} files")
+    return download_urls
+
 
 def _prepare_download_context(url: str, save_dir: str, timeout: int) -> dict:
     """
