@@ -92,7 +92,7 @@ def _prepare_download_context(url: str, save_dir: str, timeout: int) -> dict:
     network_quality = _assess_network_quality(url)
     supports_range = _check_range_support_with_retry(url)
     
-    logger.info(f"准备下载环境 - 网络质量: {network_quality}, 断点续传支持: {supports_range}, URL: {url}")
+    logger.info(f"Preparing download environment - Network quality: {network_quality}, Range support: {supports_range}, URL: {url}")
     
     # 计算自适应超时参数
     adaptive_timeouts = _calculate_adaptive_timeouts(network_quality, timeout)
@@ -131,7 +131,7 @@ def _execute_download_with_retry(context: dict, limit: int, retry: int) -> str:
     
     for attempt in range(retry + 1):  # 总共尝试 retry + 1 次
         try:
-            logger.info(f"开始下载尝试 {attempt + 1}/{retry + 1}, URL: {url}")
+            logger.info(f"Starting download attempt {attempt + 1}/{retry + 1}, URL: {url}")
             
             # 检查断点续传条件
             resume_info = _check_resume_conditions(temp_save_path, supports_range, 
@@ -155,7 +155,7 @@ def _execute_download_with_retry(context: dict, limit: int, retry: int) -> str:
             _validate_download_integrity_with_resume(response, temp_save_path, 
                                                    url, resume_info['use_resume'])
             
-            logger.info(f"下载成功完成，尝试次数: {attempt + 1}, 文件路径: {temp_save_path}")
+            logger.info(f"Download completed successfully, attempts: {attempt + 1}, file path: {temp_save_path}")
             return temp_save_path
             
         except Exception as e:
@@ -188,7 +188,7 @@ def _check_resume_conditions(save_path: str, supports_range: bool,
     existing_size = 0
     if os.path.exists(save_path):
         existing_size = os.path.getsize(save_path)
-        logger.info(f"发现已存在的部分文件: {save_path}, 大小: {existing_size} 字节")
+        logger.info(f"Found existing partial file: {save_path}, size: {existing_size} bytes")
     
     # 判断是否使用断点续传（增强条件判断）
     use_resume = (
@@ -217,10 +217,10 @@ def _execute_single_download(url: str, resume_info: dict, timeouts: dict) -> req
         requests.Response: HTTP响应对象
     """
     if resume_info['use_resume']:
-        logger.info(f"使用断点续传，从字节 {resume_info['existing_size']} 开始")
+        logger.info(f"Using resume download from byte {resume_info['existing_size']}")
         return _download_with_resume_enhanced(url, resume_info['existing_size'], timeouts)
     else:
-        logger.info("开始全新下载")
+        logger.info("Starting fresh download")
         return _download_fresh_enhanced(url, timeouts)
 
 
@@ -251,24 +251,24 @@ def _handle_download_exception(exception: Exception, attempt: int, retry: int,
     if error_category == 'fatal':
         if os.path.exists(save_path):
             _safe_remove_file(save_path)
-        logger.error(f"遇到致命错误，停止重试, URL: {url}, 错误: {str(exception)}")
+        logger.error(f"Fatal error encountered, stopping retry, URL: {url}, error: {str(exception)}")
         raise exception
     
     # 非最后一次尝试，继续重试
     if attempt < retry:
-        logger.warning(f"下载尝试 {attempt + 1} 失败, URL: {url}, 错误: {str(exception)}, 类型: {error_category}")
+        logger.warning(f"Download attempt {attempt + 1} failed, URL: {url}, error: {str(exception)}, category: {error_category}")
         
         # 决定是否清理文件
         should_cleanup = _should_cleanup_on_error(error_category, supports_range, consecutive_failures)
         if should_cleanup and os.path.exists(save_path):
             _safe_remove_file(save_path)
-            logger.debug(f"清理部分下载文件: {save_path}")
+            logger.debug(f"Cleaned up partial download file: {save_path}")
         
         # 执行重试等待
         _execute_retry_wait(attempt, error_category, consecutive_failures, context)
         return True
     else:
-        logger.error(f"所有重试尝试失败, URL: {url}, 最终错误: {str(exception)}")
+        logger.error(f"All retry attempts failed, URL: {url}, final error: {str(exception)}")
         if os.path.exists(save_path):
             _safe_remove_file(save_path)
         return False
@@ -286,7 +286,7 @@ def _execute_retry_wait(attempt: int, error_category: str, consecutive_failures:
     """
     # 计算等待时间
     wait_time = _calculate_retry_delay(attempt, error_category, consecutive_failures)
-    logger.info(f"等待 {wait_time} 秒后重试...")
+    logger.info(f"Waiting {wait_time} seconds before retry...")
     time.sleep(wait_time)
     
     # 网络错误后重新评估网络质量
@@ -295,7 +295,7 @@ def _execute_retry_wait(attempt: int, error_category: str, consecutive_failures:
         network_quality = _assess_network_quality(url)
         context['timeouts'] = _calculate_adaptive_timeouts(network_quality, 
                                                           context['timeouts']['total_timeout'])
-        logger.info(f"重新评估网络质量: {network_quality}")
+        logger.info(f"Re-assessed network quality: {network_quality}")
 
 
 def _handle_final_failure(last_exception: Optional[Exception], url: str) -> str:
@@ -312,8 +312,8 @@ def _handle_final_failure(last_exception: Optional[Exception], url: str) -> str:
     if last_exception and isinstance(last_exception, CustomException):
         raise last_exception
     
-    error_detail = str(last_exception) if last_exception else "未知错误"
-    logger.error(f"所有重试都失败, URL: {url}, 最后错误: {error_detail}")
+    error_detail = str(last_exception) if last_exception else "Unknown error"
+    logger.error(f"All retries failed, URL: {url}, last error: {error_detail}")
     raise CustomException(CustomError.DOWNLOAD_FILE_FAILED)
 
 def gen_unique_id() -> str:
@@ -405,7 +405,7 @@ def _download_file_with_timeout_and_size_check(response: requests.Response, save
         except requests.exceptions.ChunkedEncodingError as e:
             raise CustomException(
                 CustomError.DOWNLOAD_FILE_FAILED, 
-                detail=f"数据传输错误：{str(e)}"
+                detail=f"Data transfer error: {str(e)}"
             )
         except Exception as e:
             # 如果是我们自己的异常，直接重新抛出
@@ -414,7 +414,7 @@ def _download_file_with_timeout_and_size_check(response: requests.Response, save
             # 其他异常包装为下载失败
             raise CustomException(
                 CustomError.DOWNLOAD_FILE_FAILED, 
-                detail=f"下载过程中发生错误：{str(e)}"
+                detail=f"Error occurred during download: {str(e)}"
             )
 
 
@@ -460,7 +460,7 @@ def _extract_points_from_response(result: Dict[str, Any]) -> float:
         return float(points)
     except (ValueError, TypeError):
         logger.error(f"Invalid points format in API response, result: {result}")
-        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, detail="积分格式错误")
+        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, detail="Points format error")
 
 
 def get_user_points(api_key: str) -> float:
@@ -493,13 +493,13 @@ def get_user_points(api_key: str) -> float:
             raise CustomException(CustomError.INVALID_APIKEY, detail=f"{api_key}")
         else:
             logger.error(f"Failed to get user points: {result}, code: {code}")
-            raise CustomException(CustomError.UNKNOWN_ERROR, detail=f"获取用户积分时发生未知错误: {result}, code: {code}")
+            raise CustomException(CustomError.UNKNOWN_ERROR, detail=f"Unknown error occurred while getting user points: {result}, code: {code}")
             
     except CustomException:
         raise
     except Exception as e:
         logger.error(f"Unexpected error getting user points for API key {api_key}: {str(e)}")
-        raise CustomException(CustomError.UNKNOWN_ERROR, detail=f"获取用户积分时发生未知错误: {str(e)}")
+        raise CustomException(CustomError.UNKNOWN_ERROR, detail=f"Unknown error occurred while getting user points: {str(e)}")
 
 
 def deduct_user_points(api_key: str, points: float, desc: str) -> bool:
@@ -560,7 +560,7 @@ def _parse_api_response(response: requests.Response) -> Dict[str, Any]:
         return response.json()
     except ValueError:
         logger.error(f"Failed to parse API response as JSON: {response.text}")
-        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, detail="API响应格式错误")
+        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, detail="API response format error")
 
 
 def _call_user_api(method: str, endpoint: str, params: Optional[dict] = None, json_data: Optional[dict] = None, timeout: int = DEFAULT_API_TIMEOUT) -> Dict[str, Any]:
@@ -600,18 +600,18 @@ def _call_user_api(method: str, endpoint: str, params: Optional[dict] = None, js
         
     except requests.exceptions.Timeout:
         logger.error(f"User API timeout: {method} {url}")
-        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, detail="用户API调用超时")
+        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, detail="User API call timeout")
     except requests.exceptions.ConnectionError:
         logger.error(f"User API connection error: {method} {url}")
-        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, detail="无法连接到用户API服务")
+        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, detail="Unable to connect to user API service")
     except requests.exceptions.RequestException as e:
         logger.error(f"User API request failed: {method} {url}, error: {str(e)}")
-        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, detail=f"用户API请求失败: {str(e)}")
+        raise CustomException(CustomError.INTERNAL_SERVER_ERROR, detail=f"User API request failed: {str(e)}")
     except CustomException:
         raise
     except Exception as e:
         logger.error(f"Unexpected error in user API call: {method} {url}, error: {str(e)}")
-        raise CustomException(CustomError.UNKNOWN_ERROR, detail=f"调用用户API时发生未知错误: {str(e)}")
+        raise CustomException(CustomError.UNKNOWN_ERROR, detail=f"Unknown error occurred while calling user API: {str(e)}")
 
 
 def get_video_duration(file_path: str) -> int:
@@ -1006,7 +1006,7 @@ def _download_file_with_resume_support(
         except requests.exceptions.ChunkedEncodingError as e:
             raise CustomException(
                 CustomError.DOWNLOAD_FILE_FAILED, 
-                detail=f"数据传输错误：{str(e)}"
+                detail=f"Data transfer error: {str(e)}"
             )
         except Exception as e:
             # 如果是我们自己的异常，直接重新抛出
@@ -1015,7 +1015,7 @@ def _download_file_with_resume_support(
             # 其他异常包装为下载失败
             raise CustomException(
                 CustomError.DOWNLOAD_FILE_FAILED, 
-                detail=f"下载过程中发生错误：{str(e)}"
+                detail=f"Error occurred during download: {str(e)}"
             )
 
 
@@ -1338,14 +1338,14 @@ def _download_file_with_enhanced_stability(
                 if current_time - start_time > timeouts['total_timeout']:
                     raise CustomException(
                         CustomError.DOWNLOAD_FILE_TIMEOUT, 
-                        detail=f"下载超时，总耗时{current_time - start_time:.1f}秒"
+                        detail=f"Download timeout, total time {current_time - start_time:.1f}s"
                     )
                 
                 # 检查单个块的读取超时（网络停滞检测）
                 if current_time - last_chunk_time > timeouts['chunk_timeout']:
                     raise CustomException(
                         CustomError.DOWNLOAD_FILE_FAILED, 
-                        detail=f"网络连接中断，单个数据块读取超时{timeouts['chunk_timeout']}秒"
+                        detail=f"Network connection interrupted, single data chunk read timeout {timeouts['chunk_timeout']}s"
                     )
                 
                 if chunk:
@@ -1368,14 +1368,14 @@ def _download_file_with_enhanced_stability(
     except requests.exceptions.ChunkedEncodingError as e:
         raise CustomException(
             CustomError.DOWNLOAD_FILE_FAILED, 
-            detail=f"数据传输错误：{str(e)}"
+            detail=f"Data transfer error: {str(e)}"
         )
     except Exception as e:
         if isinstance(e, CustomException):
             raise e
         raise CustomException(
             CustomError.DOWNLOAD_FILE_FAILED, 
-            detail=f"下载过程中发生错误：{str(e)}"
+            detail=f"Error occurred during download: {str(e)}"
         )
 
 

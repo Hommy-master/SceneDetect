@@ -98,7 +98,7 @@ class ResponseMiddleware(BaseHTTPMiddleware):
             return JSONResponse(status_code=200, content=error_response)
             
         except json.JSONDecodeError:
-            logger.warning(f"无法解析422响应体: {body_str}")
+            logger.warning(f"Failed to parse 422 response body: {body_str}")
             
             error_response = CustomError.PARAM_VALIDATION_FAILED.as_dict(detail=body_str, lang=lang)
             return JSONResponse(status_code=200, content=error_response)
@@ -145,7 +145,7 @@ class ResponseMiddleware(BaseHTTPMiddleware):
             return self._handle_422_error(body_str, lang)
         
         # 其他非200错误处理（不应该发生，每个错误都应该在前面被处理）
-        logger.error(f"意外的非200响应: {response.status_code} - {body_str}")
+        logger.error(f"Unexpected non-200 response: {response.status_code} - {body_str}")
         
         error_response = {
             "code": response.status_code,
@@ -223,7 +223,7 @@ class ResponseMiddleware(BaseHTTPMiddleware):
             )
             
         except json.JSONDecodeError:
-            logger.warning(f"JSON解析失败: {body_str}")
+            logger.warning(f"JSON decode error: {body_str}")
             return response
 
     def _handle_custom_exception(self, e: CustomException, lang: str) -> JSONResponse:
@@ -237,7 +237,7 @@ class ResponseMiddleware(BaseHTTPMiddleware):
         Returns:
             JSONResponse: 统一格式的错误响应
         """
-        logger.warning(f"业务异常: {e.err.code} - {e.err.cn_message}" + 
+        logger.warning(f"Business exception: {e.err.code} - {e.err.cn_message}" + 
                     (f" ({e.detail})" if e.detail else ""))
         
         # 获取错误信息并返回统一响应
@@ -255,7 +255,7 @@ class ResponseMiddleware(BaseHTTPMiddleware):
         Returns:
             JSONResponse: 统一格式的错误响应
         """
-        logger.warning(f"内部服务器错误: {str(e)}")
+        logger.warning(f"Internal server error: {str(e)}")
         
         # 获取错误信息并返回统一响应
         error_response = CustomError.INTERNAL_SERVER_ERROR.as_dict(detail=str(e), lang=lang)

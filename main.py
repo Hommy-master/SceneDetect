@@ -23,10 +23,10 @@ for r in app.routes:
     path = getattr(r, "path", "N/A")
     # 获取处理函数名称
     name = getattr(r, "name", "Unknown")
-    logger.info("已注册路由: %s %s -> %s", ",".join(sorted(methods)), path, name)
+    logger.info("Registered route: %s %s -> %s", ",".join(sorted(methods)), path, name)
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("启动SceneDetect服务...")
+    logger.info("Starting SceneDetect service...")
     uvicorn.run(app, host="0.0.0.0", port=60000, lifespan="on")
-    logger.info("SceneDetect服务已停止")
+    logger.info("SceneDetect service stopped")
