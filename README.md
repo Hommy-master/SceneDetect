@@ -7,7 +7,7 @@
 - 🎬 **智能场景检测**：自动识别视频中的场景切换点
 - ⚡ **高效处理**：基于 FFmpeg 和 PySceneDetect 的高性能处理
 - 🔑 **API 密钥认证**：安全的用户认证和积分计费系统
-- 📊 **灵活配置**：支持自定义最小场景长度等参数
+- 📊 **灵活配置**：支持自定义场景检测灵敏度
 - 🌐 **RESTful API**：简洁易用的 HTTP 接口
 - 🐳 **容器化部署**：支持 Docker 一键部署
 
@@ -144,7 +144,7 @@ docker-compose pull && docker-compose up -d
 
 ### 健康检查
 
-**接口地址**：`GET /openapi/v1/health`
+**接口地址**：`GET https://scene-detect.jcaigc.cn/openapi/v1/health`
 
 **功能说明**：检查服务运行状态。
 
@@ -262,7 +262,7 @@ SceneDetect/
 
 3. **内存不足**
    - 确保系统有足够内存（推荐 8GB+）
-   - 调整最小场景长度参数以减少输出片段数量
+   - 调整场景检查灵敏度以减少输出片段数量
 
 4. **API 密钥无效**
    - 检查 API 密钥格式是否正确
@@ -274,19 +274,6 @@ SceneDetect/
 # Docker 环境查看日志
 docker logs -f scenedetect
 ```
-
-## 📝 更新日志
-
-### v1.0.0
-- ✨ 初始版本发布
-- 🎬 支持基础视频场景分割
-- 🔑 集成 API 密钥认证
-- 💰 实现积分计费系统
-- 🐳 支持 Docker 部署
-
-## 📄 许可证
-
-本项目采用 MIT 许可证，详见 LICENSE 文件。
 
 ## 🤝 贡献
 
