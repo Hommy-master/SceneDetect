@@ -1,4 +1,4 @@
-# SceneDetect - 视频镜头智能分割服务
+# 【简创AIGC】SceneDetect - 视频镜头智能分割服务
 
 基于 PySceneDetect 的视频场景自动分割服务，支持按照内容变化智能切分视频片段。
 
@@ -98,7 +98,7 @@ docker-compose pull && docker-compose up -d
 |--------|------|------|--------|----- |
 | `apiKey` | string | ✅ | - | 用户 API 密钥 |
 | `video_url` | string | ✅ | - | 视频文件 URL 地址 |
-| `min_scene_length` | float | ❌ | 2.0 | 最小场景长度（秒） |
+| `threshold` | int | ❌ | 27 | 检测敏感度阈值，值越小，越灵敏，取值范围：(0, 255) |
 
 #### 请求示例
 
@@ -164,25 +164,20 @@ docker-compose pull && docker-compose up -d
 ```python
 import requests
 
-# API 配置
-API_BASE_URL = "http://localhost:60000/openapi/v1"
-API_KEY = "your-api-key"
-
 # 发送场景分割请求
 response = requests.post(
-    f"{API_BASE_URL}/video/scene-split",
+    f"https://scene-detect.jcaigc.cn/openapi/v1/video/scene-split",
     json={
-        "apiKey": API_KEY,
-        "video_url": "https://example.com/video.mp4",
-        "min_scene_length": 3.0
+        "apiKey": "your-api-key", # 用户 apiKey，从官网：https://www.jcaigc.cn/ 获取
+        "video_url": "https://assets.jcaigc.cn/test.mp4"
     }
 )
 
 if response.status_code == 200:
     result = response.json()
     if result["code"] == 0:
-        print(f"分割成功，共生成 {len(result['scene_list'])} 个场景")
-        for i, scene_url in enumerate(result["scene_list"], 1):
+        print(f"分割成功，共生成 {len(result['data']['scene_list'])} 个场景")
+        for i, scene_url in enumerate(result["data"]["scene_list"], 1):
             print(f"场景 {i}: {scene_url}")
     else:
         print(f"分割失败：{result['message']}")
@@ -193,12 +188,12 @@ else:
 ### cURL 示例
 
 ```bash
-curl -X POST "http://localhost:60000/openapi/v1/video/scene-split" \
+curl -X POST "https://scene-detect.jcaigc.cn/openapi/v1/video/scene-split" \
   -H "Content-Type: application/json" \
   -d '{
     "apiKey": "your-api-key",
-    "video_url": "https://example.com/video.mp4",
-    "min_scene_length": 2.0
+    "video_url": "https://assets.jcaigc.cn/test.mp4",
+    "threshold": 27
   }'
 ```
 
@@ -216,74 +211,6 @@ curl -X POST "http://localhost:60000/openapi/v1/video/scene-split" \
 - 处理前会验证用户积分余额
 - 处理成功后自动扣除相应积分
 
-## ✨ 新增功能：请求跟踪ID (Trace ID)
-
-为了增强代码可调试性，方便问题排查，项目新增了HTTP请求跟踪ID功能：
-
-### 🔍 功能特点
-
-- **唯一标识**：每个HTTP请求都会生成一个唯一的8位trace_id
-- **全链路跟踪**：一次请求产生的所有日志都包含相同的trace_id
-- **自动注入**：无需修改现有日志代码，自动在所有logger输出中添加trace_id
-- **便于排查**：可以根据trace_id快速定位单次请求的完整执行轨迹
-
-### 📋 日志格式
-
-```
-2024-01-01 12:00:00.123 | INFO | a1b2c3d4 | main | service.py:123 | Starting video scene split processing
-```
-
-日志格式说明：
-- `时间戳` | `日志级别` | `trace_id` | `模块名` | `文件:行号` | `日志消息`
-
-### 🛠️ 实现原理
-
-1. **TraceMiddleware**：请求开始时生成trace_id并设置到上下文
-2. **ContextVar**：使用Python的contextvars存储trace_id
-3. **TraceIdFormatter**：日志格式化器自动从上下文获取trace_id并注入到每条日志
-4. **无侵入设计**：不需要修改现有的logger调用代码，自动在所有日志中加入trace_id
-
-### 🔧 关键日志点
-
-系统在以下关键点自动记录带trace_id的日志：
-
-- HTTP请求开始和结束
-- 视频下载开始和完成
-- 场景分割处理过程
-- 用户积分验证和扣减
-- 异常和错误处理
-- API调用成功和失败
-
-### 📊 使用示例
-
-```bash
-# 根据trace_id过滤日志
-grep "a1b2c3d4" application.log
-
-# 查看特定请求的完整处理过程
-2024-01-01 12:00:00.123 | INFO | a1b2c3d4 | middlewares | Request started: POST /openapi/v1/video/scene-split
-2024-01-01 12:00:00.124 | INFO | a1b2c3d4 | router | Video scene split API called
-2024-01-01 12:00:00.125 | INFO | a1b2c3d4 | service | Starting video scene split processing
-2024-01-01 12:00:05.456 | INFO | a1b2c3d4 | helper | Download completed successfully
-2024-01-01 12:00:15.789 | INFO | a1b2c3d4 | service | Video processing completed successfully
-2024-01-01 12:00:15.790 | INFO | a1b2c3d4 | middlewares | Request completed: POST /openapi/v1/video/scene-split - Status: 200
-```
-
-### 📝 代码示例
-
-现在你只需要正常使用logger，不需要显式添加trace_id：
-
-```python
-# 这样的代码就足够了
-logger.info("Starting video scene split processing")
-logger.error("Download failed")
-logger.warning("User points insufficient")
-
-# 不需要这样显式添加trace_id（错误做法）
-# logger.info(f"Starting video processing, trace_id: {get_trace_id()}")
-```
-
----
 
 ## 🔧 开发说明
 
@@ -344,9 +271,6 @@ SceneDetect/
 ### 日志查看
 
 ```bash
-# 查看服务日志
-tail -f logs/app.log
-
 # Docker 环境查看日志
 docker logs -f scenedetect
 ```
