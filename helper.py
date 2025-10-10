@@ -47,7 +47,8 @@ API_HEADERS = {
 }
 
 
-def download(url: str, save_dir: str, limit: int = DEFAULT_FILE_SIZE_LIMIT, timeout: int = DEFAULT_DOWNLOAD_TIMEOUT, retry: int = DEFAULT_RETRY_COUNT) -> str:
+def download(url: str, save_dir: str, limit: int = DEFAULT_FILE_SIZE_LIMIT, 
+            timeout: int = DEFAULT_DOWNLOAD_TIMEOUT, retry: int = DEFAULT_RETRY_COUNT) -> str:
     """
     下载文件并根据Content-Type判断文件类型，支持高度稳定的断点续传和智能重试机制
     
@@ -64,112 +65,255 @@ def download(url: str, save_dir: str, limit: int = DEFAULT_FILE_SIZE_LIMIT, time
     Raises:
         CustomException: 下载失败时抛出异常
     """
-    # 生成固定的文件路径（不再每次重新生成）
+    # 初始化下载环境
+    download_context = _prepare_download_context(url, save_dir, timeout)
+    
+    # 执行带重试的下载流程
+    return _execute_download_with_retry(download_context, limit, retry)
+
+
+def _prepare_download_context(url: str, save_dir: str, timeout: int) -> dict:
+    """
+    准备下载上下文信息
+    
+    Args:
+        url: 文件URL
+        save_dir: 保存目录
+        timeout: 超时时间
+    
+    Returns:
+        dict: 下载上下文字典
+    """
+    # 生成唯一的文件路径
     base_filename = gen_unique_id()
     temp_save_path = os.path.join(save_dir, base_filename)
     
-    # 检查网络连接质量和服务器支持情况
+    # 评估网络环境
     network_quality = _assess_network_quality(url)
     supports_range = _check_range_support_with_retry(url)
     
-    logger.info(f"Network quality: {network_quality}, Range support: {supports_range} for {url}")
+    logger.info(f"准备下载环境 - 网络质量: {network_quality}, 断点续传支持: {supports_range}, URL: {url}")
     
-    # 根据网络质量调整超时参数
+    # 计算自适应超时参数
     adaptive_timeouts = _calculate_adaptive_timeouts(network_quality, timeout)
     
-    last_exception = None
-    consecutive_failures = 0  # 连续失败次数
+    return {
+        'url': url,
+        'save_path': temp_save_path,
+        'network_quality': network_quality,
+        'supports_range': supports_range,
+        'timeouts': adaptive_timeouts
+    }
+
+
+def _execute_download_with_retry(context: dict, limit: int, retry: int) -> str:
+    """
+    执行带重试机制的下载流程
     
-    for attempt in range(retry + 1):  # 总共尝试 retry + 1 次（包括第一次）
+    Args:
+        context: 下载上下文
+        limit: 文件大小限制
+        retry: 重试次数
+    
+    Returns:
+        str: 下载成功的文件路径
+        
+    Raises:
+        CustomException: 下载失败时抛出异常
+    """
+    url = context['url']
+    temp_save_path = context['save_path']
+    supports_range = context['supports_range']
+    timeouts = context['timeouts']
+    
+    last_exception = None
+    consecutive_failures = 0  # 连续失败计数器
+    
+    for attempt in range(retry + 1):  # 总共尝试 retry + 1 次
         try:
-            logger.info(f"Downloading file, attempt {attempt + 1}/{retry + 1}, url: {url}")
+            logger.info(f"开始下载尝试 {attempt + 1}/{retry + 1}, URL: {url}")
             
-            # 检查是否存在部分下载的文件
-            existing_size = 0
-            if os.path.exists(temp_save_path):
-                existing_size = os.path.getsize(temp_save_path)
-                logger.info(f"Found existing partial file: {temp_save_path}, size: {existing_size} bytes")
+            # 检查断点续传条件
+            resume_info = _check_resume_conditions(temp_save_path, supports_range, 
+                                                 attempt, consecutive_failures)
             
-            # 决定是否使用断点续传（仅在部分文件足够大时使用）
-            use_resume = (
-                supports_range and 
-                existing_size >= MIN_PARTIAL_SIZE and 
-                attempt > 0 and
-                consecutive_failures <= 2  # 连续失败太多时不使用断点续传
-            )
+            # 执行单次下载
+            response = _execute_single_download(url, resume_info, timeouts)
             
-            if use_resume:
-                logger.info(f"Resuming download from byte {existing_size}")
-                response = _download_with_resume_enhanced(url, existing_size, adaptive_timeouts)
-            else:
-                if existing_size > 0 and (not supports_range or consecutive_failures > 2):
-                    logger.info("Removing partial file due to server limitation or repeated failures")
-                    _safe_remove_file(temp_save_path)
-                    existing_size = 0
-                logger.info("Starting fresh download with enhanced stability")
-                response = _download_fresh_enhanced(url, adaptive_timeouts)
-            
-            # 获取并处理文件类型（只在首次下载时进行）
-            if existing_size == 0:
+            # 确定最终文件路径（首次下载时添加扩展名）
+            if resume_info['existing_size'] == 0:
                 temp_save_path = _determine_file_path_with_extension(response, temp_save_path)
+                context['save_path'] = temp_save_path
             
-            # 下载文件并检查大小（增强版本）
+            # 下载文件内容
             _download_file_with_enhanced_stability(
-                response, temp_save_path, limit, url, adaptive_timeouts, 
-                existing_size, use_resume
+                response, temp_save_path, limit, url, timeouts, 
+                resume_info['existing_size'], resume_info['use_resume']
             )
             
             # 验证下载完整性
-            _validate_download_integrity_with_resume(response, temp_save_path, url, use_resume)
+            _validate_download_integrity_with_resume(response, temp_save_path, 
+                                                   url, resume_info['use_resume'])
             
-            logger.info(f"Download success on attempt {attempt + 1}, url: {url}, save_path: {temp_save_path}")
+            logger.info(f"下载成功完成，尝试次数: {attempt + 1}, 文件路径: {temp_save_path}")
             return temp_save_path
             
         except Exception as e:
             last_exception = e
             consecutive_failures += 1
             
-            # 分类处理异常
-            error_category = _classify_download_error(e)
-            
-            # 如果是不可恢复的错误，直接抛出
-            if error_category == 'fatal':
-                if os.path.exists(temp_save_path):
-                    _safe_remove_file(temp_save_path)
-                logger.error(f"Fatal error, no retry needed, url: {url}, error: {str(e)}")
-                raise e
-            
-            # 如果不是最后一次尝试，记录警告并等待
-            if attempt < retry:
-                logger.warning(f"Download attempt {attempt + 1} failed, url: {url}, error: {str(e)}, category: {error_category}")
-                
-                # 根据错误类型决定是否清理文件
-                should_cleanup = _should_cleanup_on_error(error_category, supports_range, consecutive_failures)
-                if should_cleanup and os.path.exists(temp_save_path):
-                    _safe_remove_file(temp_save_path)
-                    logger.debug(f"Cleaned up partial download file: {temp_save_path}")
-                
-                # 智能重试等待策略
-                wait_time = _calculate_retry_delay(attempt, error_category, consecutive_failures)
-                logger.info(f"Waiting {wait_time}s before retry...")
-                time.sleep(wait_time)
-                
-                # 在网络问题后重新评估网络质量
-                if error_category == 'network':
-                    network_quality = _assess_network_quality(url)
-                    adaptive_timeouts = _calculate_adaptive_timeouts(network_quality, timeout)
-                    logger.info(f"Re-assessed network quality: {network_quality}")
-            else:
-                logger.error(f"Download failed after {retry + 1} attempts, url: {url}, final error: {str(e)}")
-                # 最后一次失败后清理文件
-                if os.path.exists(temp_save_path):
-                    _safe_remove_file(temp_save_path)
+            # 处理下载异常
+            if not _handle_download_exception(e, attempt, retry, temp_save_path, 
+                                            supports_range, consecutive_failures, context):
+                break  # 致命错误，停止重试
     
-    # 所有重试都失败后，抛出最后一次的异常
-    if isinstance(last_exception, CustomException):
+    # 所有重试都失败，抛出异常
+    return _handle_final_failure(last_exception, url)
+
+
+def _check_resume_conditions(save_path: str, supports_range: bool, 
+                           attempt: int, consecutive_failures: int) -> dict:
+    """
+    检查断点续传条件
+    
+    Args:
+        save_path: 保存路径
+        supports_range: 是否支持范围请求
+        attempt: 当前尝试次数
+        consecutive_failures: 连续失败次数
+    
+    Returns:
+        dict: 断点续传信息字典
+    """
+    existing_size = 0
+    if os.path.exists(save_path):
+        existing_size = os.path.getsize(save_path)
+        logger.info(f"发现已存在的部分文件: {save_path}, 大小: {existing_size} 字节")
+    
+    # 判断是否使用断点续传（增强条件判断）
+    use_resume = (
+        supports_range and 
+        existing_size >= MIN_PARTIAL_SIZE and 
+        attempt > 0 and
+        consecutive_failures <= 2  # 连续失败不超过2次才使用断点续传
+    )
+    
+    return {
+        'existing_size': existing_size,
+        'use_resume': use_resume
+    }
+
+
+def _execute_single_download(url: str, resume_info: dict, timeouts: dict) -> requests.Response:
+    """
+    执行单次下载操作
+    
+    Args:
+        url: 文件URL
+        resume_info: 断点续传信息
+        timeouts: 超时配置
+    
+    Returns:
+        requests.Response: HTTP响应对象
+    """
+    if resume_info['use_resume']:
+        logger.info(f"使用断点续传，从字节 {resume_info['existing_size']} 开始")
+        return _download_with_resume_enhanced(url, resume_info['existing_size'], timeouts)
+    else:
+        logger.info("开始全新下载")
+        return _download_fresh_enhanced(url, timeouts)
+
+
+def _handle_download_exception(exception: Exception, attempt: int, retry: int, 
+                             save_path: str, supports_range: bool, 
+                             consecutive_failures: int, context: dict) -> bool:
+    """
+    处理下载异常
+    
+    Args:
+        exception: 异常对象
+        attempt: 当前尝试次数
+        retry: 总重试次数
+        save_path: 保存路径
+        supports_range: 是否支持范围请求
+        consecutive_failures: 连续失败次数
+        context: 下载上下文
+    
+    Returns:
+        bool: True表示可以继续重试，False表示应该停止
+    """
+    url = context['url']
+    
+    # 错误分类
+    error_category = _classify_download_error(exception)
+    
+    # 致命错误直接停止
+    if error_category == 'fatal':
+        if os.path.exists(save_path):
+            _safe_remove_file(save_path)
+        logger.error(f"遇到致命错误，停止重试, URL: {url}, 错误: {str(exception)}")
+        raise exception
+    
+    # 非最后一次尝试，继续重试
+    if attempt < retry:
+        logger.warning(f"下载尝试 {attempt + 1} 失败, URL: {url}, 错误: {str(exception)}, 类型: {error_category}")
+        
+        # 决定是否清理文件
+        should_cleanup = _should_cleanup_on_error(error_category, supports_range, consecutive_failures)
+        if should_cleanup and os.path.exists(save_path):
+            _safe_remove_file(save_path)
+            logger.debug(f"清理部分下载文件: {save_path}")
+        
+        # 执行重试等待
+        _execute_retry_wait(attempt, error_category, consecutive_failures, context)
+        return True
+    else:
+        logger.error(f"所有重试尝试失败, URL: {url}, 最终错误: {str(exception)}")
+        if os.path.exists(save_path):
+            _safe_remove_file(save_path)
+        return False
+
+
+def _execute_retry_wait(attempt: int, error_category: str, consecutive_failures: int, context: dict) -> None:
+    """
+    执行重试等待逻辑
+    
+    Args:
+        attempt: 当前尝试次数
+        error_category: 错误类型
+        consecutive_failures: 连续失败次数
+        context: 下载上下文
+    """
+    # 计算等待时间
+    wait_time = _calculate_retry_delay(attempt, error_category, consecutive_failures)
+    logger.info(f"等待 {wait_time} 秒后重试...")
+    time.sleep(wait_time)
+    
+    # 网络错误后重新评估网络质量
+    if error_category == 'network':
+        url = context['url']
+        network_quality = _assess_network_quality(url)
+        context['timeouts'] = _calculate_adaptive_timeouts(network_quality, 
+                                                          context['timeouts']['total_timeout'])
+        logger.info(f"重新评估网络质量: {network_quality}")
+
+
+def _handle_final_failure(last_exception: Optional[Exception], url: str) -> str:
+    """
+    处理最终失败情况
+    
+    Args:
+        last_exception: 最后一次异常（可能为None）
+        url: 文件URL
+    
+    Raises:
+        CustomException: 总是抛出异常
+    """
+    if last_exception and isinstance(last_exception, CustomException):
         raise last_exception
     
-    logger.error(f"Download failed after all retries, url: {url}, last error: {str(last_exception)}")
+    error_detail = str(last_exception) if last_exception else "未知错误"
+    logger.error(f"所有重试都失败, URL: {url}, 最后错误: {error_detail}")
     raise CustomException(CustomError.DOWNLOAD_FILE_FAILED)
 
 def gen_unique_id() -> str:

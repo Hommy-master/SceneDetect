@@ -4,31 +4,29 @@ import middlewares
 from logger import logger
 
 
-# 2. 创建FastAPI应用
+# 创建FastAPI应用实例
 app = FastAPI(title="SceneDetect API", description="视频场景分割服务")
 
-# 3. 注册路由
+# 注册业务路由
 app.include_router(router.router, prefix="/openapi", tags=["SceneDetect"])
 
-# 4. 添加中间件
-app.add_middleware(middlewares.PrepareMiddleware)
-# 注册统一响应处理中间件（注意顺序，应该在其他中间件之后注册）
-app.add_middleware(middlewares.ResponseMiddleware)
-# 注册超时处理中间件
-app.add_middleware(middlewares.TimeoutMiddleware, timeout_seconds=600)
+# 添加中间件（注意注册顺序：后注册的中间件先执行）
+app.add_middleware(middlewares.PrepareMiddleware)  # 请求准备中间件
+app.add_middleware(middlewares.ResponseMiddleware)  # 统一响应处理中间件
+app.add_middleware(middlewares.TimeoutMiddleware, timeout_seconds=600)  # 超时处理中间件
 
-# 5. 打印所有路由
+# 打印所有已注册的路由信息
 for r in app.routes:
-    # 1. 取 HTTP 方法列表
+    # 获取HTTP方法列表
     methods = getattr(r, "methods", None) or [getattr(r, "method", "WS")]
-    # 2. 取路径
+    # 获取路径
     path = getattr(r, "path", "N/A")
-    # 3. 取函数名（使用 getattr 安全访问，提供默认值）
+    # 获取处理函数名称
     name = getattr(r, "name", "Unknown")
-    logger.info("Route: %s %s -> %s", ",".join(sorted(methods)), path, name)
+    logger.info("已注册路由: %s %s -> %s", ",".join(sorted(methods)), path, name)
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("Start SceneDetect Service ...")
+    logger.info("启动SceneDetect服务...")
     uvicorn.run(app, host="0.0.0.0", port=60000, lifespan="on")
-    logger.info("SceneDetect Service stopped")
+    logger.info("SceneDetect服务已停止")

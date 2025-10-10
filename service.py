@@ -119,12 +119,12 @@ def video_scene_split(
     threshold: int = 27
     ) -> List[str]:
     """
-    视频场景分割
+    视频场景分割主流程：验证用户、下载视频、计算费用、执行分割、生成下载链接
     
     Args:
         api_key: 用户API密钥
         video_url: 视频URL地址
-        threshold: 灵敏度，默认27
+        threshold: 场景分割灵敏度，默认27
     
     Returns:
         List[str]: 分割后的视频文件下载链接列表
@@ -132,47 +132,113 @@ def video_scene_split(
     Raises:
         CustomException: 业务异常（API密钥无效、余额不足、分割失败等）
     """
-    # 1. 验证API密钥并获取用户积分
+    logger.info(f"开始视频场景分割处理, API Key: {api_key[:8]}***, URL: {video_url}")
+    
+    # 步骤1：验证API密钥并获取用户积分
     user_points = _validate_api_key_and_get_points(api_key, video_url)
     
-    # 2. 下载视频文件
+    # 步骤2：下载视频文件
     video_file = helper.download(video_url, config.TEMP_DIR)
     
     try:
-        # 3. 获取视频时长并计算价格
-        duration = helper.get_video_duration(video_file)
-        price = duration * PRICE_PER_SECOND
+        # 步骤3：获取视频时长并计算费用
+        duration_and_price = _calculate_video_cost(video_file)
+        duration = duration_and_price['duration']
+        price = duration_and_price['price']
         
-        # 4. 检查用户积分是否足够
+        logger.info(f"视频时长: {duration}秒, 预估费用: {price:.2f}积分")
+        
+        # 步骤4：检查用户积分是否足够
         _validate_user_balance(user_points, price, video_url)
         
-        # 5. 获取文件名称
-        video_name = os.path.basename(video_file)
-        base_name = os.path.splitext(video_name)[0]
-        logger.info(f"video_file: {video_file}, base_name: {base_name}")
+        # 步骤5：执行视频场景分割
+        output_files = _perform_scene_detection_and_split(video_file, threshold)
         
-        # 6. 执行场景检测和视频分割
-        try:
-            output_files = _execute_scene_detection(video_file, base_name, threshold, EXEC_TIMEOUT)
-            
-            # 消减用户的帐户余额，这里的判断是保证上面的查询是成功的，如果上面的查询失败了，这里就不做处理了
-            if user_points > MIN_POINTS_THRESHOLD:
-                helper.deduct_user_points(api_key, price, '调用按镜头切分视频')
-            
-            return gen_download_urls(output_files)
-        except subprocess.TimeoutExpired:
-            logger.warning(f"Video scene split timeout, video_url: {video_url}")
-            raise CustomException(err=CustomError.VIDEO_SCENE_SPLIT_TIMEOUT)
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Video scene split failed, video_url: {video_url}, returncode: {e.returncode}, stderr: {e.stderr}")
-            raise CustomException(err=CustomError.VIDEO_SCENE_SPLIT_FAILED)
-        except Exception as e:
-            logger.error(f"Video scene split unknown error, video_url: {video_url}, detail: {traceback.format_exc()}")
-            raise CustomException(err=CustomError.VIDEO_SCENE_SPLIT_FAILED)
+        # 步骤6：扣减用户积分（仅在积分查询成功时执行）
+        _deduct_user_points_if_possible(user_points, api_key, price)
+        
+        # 步骤7：生成下载链接并返回
+        download_urls = gen_download_urls(output_files)
+        logger.info(f"视频场景分割完成，生成 {len(download_urls)} 个视频片段")
+        return download_urls
     
     finally:
-        # 7. 清理临时下载的视频文件
+        # 步骤8：清理临时下载的视频文件
         helper.cleanup_temp_file(video_file)
+
+
+def _calculate_video_cost(video_file: str) -> dict:
+    """
+    计算视频处理成本
+    
+    Args:
+        video_file: 视频文件路径
+    
+    Returns:
+        dict: 包含时长和价格的字典
+    """
+    duration = helper.get_video_duration(video_file)
+    price = duration * PRICE_PER_SECOND
+    
+    return {
+        'duration': duration,
+        'price': price
+    }
+
+
+def _perform_scene_detection_and_split(video_file: str, threshold: int) -> List[str]:
+    """
+    执行视频场景检测和分割操作
+    
+    Args:
+        video_file: 视频文件路径
+        threshold: 场景切分灵敏度
+    
+    Returns:
+        List[str]: 分割后的视频文件路径列表
+        
+    Raises:
+        CustomException: 场景分割失败时抛出异常
+    """
+    try:
+        # 获取文件名称信息
+        video_name = os.path.basename(video_file)
+        base_name = os.path.splitext(video_name)[0]
+        logger.info(f"准备分割视频: {video_file}, 基础文件名: {base_name}")
+        
+        # 执行场景检测
+        output_files = _execute_scene_detection(video_file, base_name, threshold, EXEC_TIMEOUT)
+        
+        logger.info(f"场景分割成功，生成 {len(output_files)} 个文件: {output_files}")
+        return output_files
+        
+    except subprocess.TimeoutExpired:
+        logger.warning(f"视频场景分割超时, 文件: {video_file}")
+        raise CustomException(err=CustomError.VIDEO_SCENE_SPLIT_TIMEOUT)
+    except subprocess.CalledProcessError as e:
+        logger.error(f"视频场景分割失败, 文件: {video_file}, 返回码: {e.returncode}, 错误: {e.stderr}")
+        raise CustomException(err=CustomError.VIDEO_SCENE_SPLIT_FAILED)
+    except Exception as e:
+        logger.error(f"视频场景分割未知错误, 文件: {video_file}, 详情: {traceback.format_exc()}")
+        raise CustomException(err=CustomError.VIDEO_SCENE_SPLIT_FAILED)
+
+
+def _deduct_user_points_if_possible(user_points: float, api_key: str, price: float) -> None:
+    """
+    如果用户积分查询成功，则执行积分扣减
+    
+    Args:
+        user_points: 用户当前积分
+        api_key: API密钥
+        price: 需要扣减的积分
+    """
+    # 仅在积分查询成功时才执行扣减操作
+    if user_points > MIN_POINTS_THRESHOLD:
+        success = helper.deduct_user_points(api_key, price, '调用按镜头切分视频')
+        if success:
+            logger.info(f"成功扣减积分: {price:.2f}, API Key: {api_key[:8]}***")
+        else:
+            logger.warning(f"积分扣减失败，但不影响业务结果, API Key: {api_key[:8]}***")
 
 def gen_download_url(file_path: str) -> str:
     """
