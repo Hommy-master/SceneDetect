@@ -17,28 +17,37 @@ import config
 
 # 常量配置
 DEFAULT_FILE_SIZE_LIMIT = 200 * 1024 * 1024  # 200MB
-DEFAULT_DOWNLOAD_TIMEOUT = 90  # 修改视频下载超时时间（秒）
-DEFAULT_CONNECT_TIMEOUT = 30  # 连接超时30秒，增加容忍度
-DEFAULT_READ_TIMEOUT = 30  # 读取超时30秒，增加容忍度
+DEFAULT_DOWNLOAD_TIMEOUT = 90  # 总下载超时时间90秒（用户要求）
+DEFAULT_CONNECT_TIMEOUT = 10  # 连接超时10秒，快速失败
+DEFAULT_READ_TIMEOUT = 15  # 读取超时15秒，平衡稳定性和速度
 DEFAULT_API_TIMEOUT = 30  # 30秒
 DEFAULT_FFPROBE_TIMEOUT = 30  # 30秒
-DEFAULT_RETRY_COUNT = 5  # 默认重试次数增加到5次
-CHUNK_SIZE = 16384  # 16KB，增加块大小提高效率
-CHUNK_READ_TIMEOUT = 30  # 每个块的读取超时时间增加到30秒
+DEFAULT_RETRY_COUNT = 3  # 重试次数改为3次，在90秒内完成
+CHUNK_SIZE = 32768  # 32KB，增加块大小提高效率
+CHUNK_READ_TIMEOUT = 10  # 每个块的读取超时10秒，快速检测网络中断
 CONNECTION_RETRY_DELAY = 1  # 连接重试间隔时间（秒）
-MAX_RETRY_DELAY = 60  # 最大重试等待时间（秒）
+MAX_RETRY_DELAY = 8  # 最大重试等待时间8秒，控制总时间
 MIN_PARTIAL_SIZE = 1024  # 最小部分下载大小（字节），小于此尺寸不使用断点续传
 USER_API_BASE_URL = "https://user.jcaigc.cn/openapi/user/v1"
+
+# 网络质量评估阈值
+NETWORK_GOOD_THRESHOLD = 0.5  # 0.5秒内响应认为网络良好
+NETWORK_MEDIUM_THRESHOLD = 2.0  # 2秒内响应认为网络中等
+
+# HTTP连接池配置
+CONNECTION_POOL_SIZE = 3  # 连接池大小
+CONNECTION_POOL_MAXSIZE = 5  # 连接池最大连接数
 
 # HTTP请求头（优化网络稳定性）
 DOWNLOAD_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': '*/*',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    'Accept-Encoding': 'identity',  # 禁用压缩，避免解压问题
+    'Accept-Encoding': 'gzip, deflate',  # 支持压缩提高传输效率
     'Connection': 'keep-alive',  # 保持连接
     'Cache-Control': 'no-cache',  # 不使用缓存
-    'Pragma': 'no-cache'  # 兼容性缓存控制
+    'Pragma': 'no-cache',  # 兼容性缓存控制
+    'Keep-Alive': 'timeout=30, max=3'  # Keep-Alive配置
 }
 
 API_HEADERS = {
@@ -909,7 +918,7 @@ def _safe_remove_file(file_path: str) -> None:
 
 def _assess_network_quality(url: str) -> str:
     """
-    评估网络质量
+    评估网络质量（优化版）
     
     Args:
         url: 测试URL
@@ -923,18 +932,24 @@ def _assess_network_quality(url: str) -> str:
         test_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
         
         start_time = time.time()
+        # 使用较短的超时时间快速测试
         response = requests.head(
             test_url,
-            timeout=(10, 5),  # 短超时测试
-            headers={'User-Agent': DOWNLOAD_HEADERS['User-Agent']}
+            timeout=(3, 5),  # 更短的超时测试
+            headers={'User-Agent': DOWNLOAD_HEADERS['User-Agent']},
+            allow_redirects=True
         )
         response_time = time.time() - start_time
         
-        if response_time < 1.0:
+        # 根据响应时间判断网络质量
+        if response_time < NETWORK_GOOD_THRESHOLD:
+            logger.debug(f"Network quality: good ({response_time:.2f}s)")
             return 'good'
-        elif response_time < 3.0:
+        elif response_time < NETWORK_MEDIUM_THRESHOLD:
+            logger.debug(f"Network quality: medium ({response_time:.2f}s)")
             return 'medium'
         else:
+            logger.debug(f"Network quality: poor ({response_time:.2f}s)")
             return 'poor'
             
     except Exception as e:
@@ -981,7 +996,7 @@ def _check_range_support_with_retry(url: str, max_retries: int = 2) -> bool:
 
 def _calculate_adaptive_timeouts(network_quality: str, base_timeout: int) -> dict:
     """
-    根据网络质量计算自适应超时参数
+    根据网络质量计算自适应超时参数（优化版）
     
     Args:
         network_quality: 网络质量 ('good', 'medium', 'poor')
@@ -991,26 +1006,68 @@ def _calculate_adaptive_timeouts(network_quality: str, base_timeout: int) -> dic
         dict: 超时参数字典
     """
     if network_quality == 'good':
-        multiplier = 1.0
-        chunk_timeout_multiplier = 1.0
+        # 网络良好，使用较短超时
+        connect_multiplier = 0.8
+        read_multiplier = 0.8
+        chunk_multiplier = 0.7
     elif network_quality == 'medium':
-        multiplier = 1.5
-        chunk_timeout_multiplier = 2.0
+        # 网络中等，使用默认超时
+        connect_multiplier = 1.0
+        read_multiplier = 1.0
+        chunk_multiplier = 1.0
     else:  # poor
-        multiplier = 2.0
-        chunk_timeout_multiplier = 3.0
+        # 网络较差，适度增加超时但不过大
+        connect_multiplier = 1.3
+        read_multiplier = 1.2
+        chunk_multiplier = 1.5
     
     return {
-        'connect_timeout': int(DEFAULT_CONNECT_TIMEOUT * multiplier),
-        'read_timeout': int(DEFAULT_READ_TIMEOUT * multiplier),
-        'total_timeout': int(base_timeout * multiplier),
-        'chunk_timeout': int(CHUNK_READ_TIMEOUT * chunk_timeout_multiplier)
+        'connect_timeout': max(5, int(DEFAULT_CONNECT_TIMEOUT * connect_multiplier)),
+        'read_timeout': max(8, int(DEFAULT_READ_TIMEOUT * read_multiplier)),
+        'total_timeout': base_timeout,  # 保持90秒限制
+        'chunk_timeout': max(5, int(CHUNK_READ_TIMEOUT * chunk_multiplier))
     }
+
+
+def _create_optimized_session() -> requests.Session:
+    """
+    创建优化的requests session，支持连接池和重试
+    
+    Returns:
+        requests.Session: 配置好的session对象
+    """
+    session = requests.Session()
+    
+    # 设置重试适配器
+    from urllib3.util.retry import Retry
+    from requests.adapters import HTTPAdapter
+    
+    # 配置重试策略
+    retry_strategy = Retry(
+        total=0,  # 在session层级不做重试，由外层控制
+        backoff_factor=0.5,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET", "HEAD"],
+        raise_on_status=False
+    )
+    
+    # 设置连接池
+    adapter = HTTPAdapter(
+        max_retries=retry_strategy,
+        pool_connections=CONNECTION_POOL_SIZE,
+        pool_maxsize=CONNECTION_POOL_MAXSIZE,
+        pool_block=False
+    )
+    
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
+    return session
 
 
 def _download_with_resume_enhanced(url: str, resume_pos: int, timeouts: dict) -> requests.Response:
     """
-    增强版的断点续传下载
+    增强版的断点续传下载（优化HTTP协议）
     
     Args:
         url: 文件URL
@@ -1023,12 +1080,14 @@ def _download_with_resume_enhanced(url: str, resume_pos: int, timeouts: dict) ->
     headers = DOWNLOAD_HEADERS.copy()
     headers['Range'] = f'bytes={resume_pos}-'
     
-    # 使用更长的超时时间和重试机制
-    session = requests.Session()
+    # 使用优化的session
+    session = _create_optimized_session()
     session.headers.update(headers)
     
-    for attempt in range(3):  # 内部重试机制
+    # 快速重试机制（2次尝试）
+    for attempt in range(2):
         try:
+            logger.debug(f"Resume download attempt {attempt + 1}, position: {resume_pos}")
             response = session.get(
                 url,
                 stream=True,
@@ -1045,18 +1104,22 @@ def _download_with_resume_enhanced(url: str, resume_pos: int, timeouts: dict) ->
                 response.raise_for_status()
                 
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-            if attempt < 2:
+            if attempt < 1:
                 logger.warning(f"Resume download attempt {attempt + 1} failed: {e}, retrying...")
                 time.sleep(CONNECTION_RETRY_DELAY)
             else:
+                logger.error(f"Resume download failed after {attempt + 1} attempts: {e}")
                 raise
+        except Exception as e:
+            logger.error(f"Resume download unexpected error: {e}")
+            raise
     
     raise requests.exceptions.RequestException("Failed to establish resume connection after retries")
 
 
 def _download_fresh_enhanced(url: str, timeouts: dict) -> requests.Response:
     """
-    增强版的全新下载
+    增强版的全新下载（优化HTTP协议）
     
     Args:
         url: 文件URL
@@ -1065,25 +1128,33 @@ def _download_fresh_enhanced(url: str, timeouts: dict) -> requests.Response:
     Returns:
         requests.Response: HTTP响应对象
     """
-    session = requests.Session()
+    # 使用优化的session
+    session = _create_optimized_session()
     session.headers.update(DOWNLOAD_HEADERS)
     
-    for attempt in range(3):  # 内部重试机制
+    # 快速重试机制（2次尝试）
+    for attempt in range(2):
         try:
+            logger.debug(f"Fresh download attempt {attempt + 1}")
             response = session.get(
                 url,
                 stream=True,
                 timeout=(timeouts['connect_timeout'], timeouts['read_timeout'])
             )
             response.raise_for_status()
+            logger.info(f"Fresh download successful, status: {response.status_code}")
             return response
             
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-            if attempt < 2:
+            if attempt < 1:
                 logger.warning(f"Fresh download attempt {attempt + 1} failed: {e}, retrying...")
                 time.sleep(CONNECTION_RETRY_DELAY)
             else:
+                logger.error(f"Fresh download failed after {attempt + 1} attempts: {e}")
                 raise
+        except Exception as e:
+            logger.error(f"Fresh download unexpected error: {e}")
+            raise
     
     raise requests.exceptions.RequestException("Failed to establish fresh connection after retries")
 
@@ -1098,7 +1169,7 @@ def _download_file_with_enhanced_stability(
     is_resume: bool = False
 ) -> None:
     """
-    增强稳定性的文件下载
+    增强稳定性的文件下载（优化版）
     
     Args:
         response: HTTP响应对象
@@ -1113,6 +1184,7 @@ def _download_file_with_enhanced_stability(
     start_time = time.time()
     last_chunk_time = start_time
     last_progress_time = start_time
+    stall_count = 0  # 停滞计数器
     
     file_mode = 'ab' if is_resume else 'wb'
     
@@ -1121,24 +1193,35 @@ def _download_file_with_enhanced_stability(
             for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
                 current_time = time.time()
                 
-                # 检查总体超时
+                # 检查总体超时（严格90秒限制）
                 if current_time - start_time > timeouts['total_timeout']:
+                    logger.error(f"Download total timeout: {current_time - start_time:.1f}s > {timeouts['total_timeout']}s")
                     raise CustomException(
                         CustomError.DOWNLOAD_FILE_TIMEOUT, 
                         detail=f"Download timeout, total time {current_time - start_time:.1f}s"
                     )
                 
                 # 检查单个块的读取超时（网络停滞检测）
-                if current_time - last_chunk_time > timeouts['chunk_timeout']:
-                    raise CustomException(
-                        CustomError.DOWNLOAD_FILE_FAILED, 
-                        detail=f"Network connection interrupted, single data chunk read timeout {timeouts['chunk_timeout']}s"
-                    )
+                chunk_interval = current_time - last_chunk_time
+                if chunk_interval > timeouts['chunk_timeout']:
+                    stall_count += 1
+                    logger.warning(f"Network stall detected: {chunk_interval:.1f}s, count: {stall_count}")
+                    
+                    # 连续停滞超过阈值则抛出异常
+                    if stall_count >= 3:
+                        raise CustomException(
+                            CustomError.DOWNLOAD_FILE_FAILED, 
+                            detail=f"Network connection unstable, multiple stalls detected"
+                        )
                 
                 if chunk:
                     f.write(chunk)
                     downloaded_size += len(chunk)
                     last_chunk_time = current_time
+                    
+                    # 重置停滞计数器
+                    if len(chunk) > 0:
+                        stall_count = 0
                     
                     # 检查文件大小是否超过限制
                     if downloaded_size > limit:
@@ -1147,9 +1230,14 @@ def _download_file_with_enhanced_stability(
                             detail=f"{limit / 1024 / 1024:.2f} MB"
                         )
                     
-                    # 更频繁的进度日志（5MB间隔）
-                    if current_time - last_progress_time >= 30:  # 每30秒记录一次
-                        logger.info(f"Downloaded {downloaded_size / 1024 / 1024:.1f}MB for {url}")
+                    # 更频繁的进度日志（15秒间隔）
+                    if current_time - last_progress_time >= 15:
+                        progress_percent = (downloaded_size / limit) * 100 if limit > 0 else 0
+                        speed_mbps = (downloaded_size - existing_size) / (current_time - start_time) / 1024 / 1024
+                        logger.info(
+                            f"Download progress: {downloaded_size / 1024 / 1024:.1f}MB "
+                            f"({progress_percent:.1f}%), speed: {speed_mbps:.2f}MB/s, URL: {url[:50]}..."
+                        )
                         last_progress_time = current_time
                         
     except requests.exceptions.ChunkedEncodingError as e:
@@ -1231,7 +1319,7 @@ def _should_cleanup_on_error(error_category: str, supports_range: bool, consecut
 
 def _calculate_retry_delay(attempt: int, error_category: str, consecutive_failures: int) -> int:
     """
-    计算重试等待时间
+    计算重试等待时间（优化版，控制总时间在90秒内）
     
     Args:
         attempt: 当前尝试次数
@@ -1241,22 +1329,23 @@ def _calculate_retry_delay(attempt: int, error_category: str, consecutive_failur
     Returns:
         int: 等待时间（秒）
     """
-    # 基础指数退避
-    base_delay = min(2 ** attempt, MAX_RETRY_DELAY)
+    # 更短的基础等待时间，确保90秒内完成
+    base_delays = [1, 2, 4]  # 递增延迟
+    base_delay = base_delays[min(attempt, len(base_delays) - 1)]
     
-    # 根据错误类型调整
+    # 根据错误类型调整（幅度更小）
     if error_category == 'network':
-        # 网络错误需要更长的等待时间
-        multiplier = 1.5
+        # 网络错误需要稍微更长的等待时间
+        multiplier = 1.2
     elif error_category == 'server':
         # 服务器错误稍微等待
-        multiplier = 1.2
+        multiplier = 1.1
     else:
         multiplier = 1.0
     
-    # 连续失败次数调整
-    if consecutive_failures >= 3:
-        multiplier *= 1.5
+    # 连续失败次数调整（幅度更小）
+    if consecutive_failures >= 2:
+        multiplier *= 1.1
     
     final_delay = min(int(base_delay * multiplier), MAX_RETRY_DELAY)
     return max(final_delay, 1)  # 最少等待1秒
