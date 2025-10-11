@@ -287,7 +287,9 @@ docker logs -f scenedetect
 ## 📞 支持
 官网：https://www.jcaigc.cn/
 
-扣子插件链接：https://www.coze.cn/store/plugin/7552503057066721315?from=store_search_suggestion
+扣子插件链接：https://www.coze.cn/store/plugin/7552503057066721315
+
+开源项目地址：https://github.com/Hommy-master/SceneDetect
 
 如有问题，请联系：taohongmin51@gmail.com
 
