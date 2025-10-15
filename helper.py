@@ -259,10 +259,10 @@ def cos_upload_file(file_path: str, expire_days: int = 1) -> str:
         expire_time = datetime.datetime.now() + datetime.timedelta(days=expire_days)
         expire_time_str = expire_time.strftime("%Y-%m-%dT%H:%M:%S.000Z")
         
-        response = cli.put_object_from_local_file(
+        response = cli.upload_file(
             Bucket=config.COS_BUCKET_NAME, 
-            LocalFilePath=file_path,
-            Key=key
+            Key=key,
+            LocalFilePath=file_path            
         )
         logger.info(f"COS upload success, key: {key}, expire time: {expire_time_str}, response: {response}")
         
