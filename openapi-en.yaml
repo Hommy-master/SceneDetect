@@ -1,0 +1,67 @@
+components:
+    examples:
+        SceneSplit:
+            value:
+                ReqExample:
+                    apiKey: 864f0771-4c13-49ef-a4c0-dfc2203e5883
+                    threshold: 27
+                    video_url: https://t.jcaigc.cn/scenedetect.mp4
+                RespExample:
+                    code: 0
+                    data:
+                        scene_list:
+                            - http://scene-detect-1367161383.cos.ap-shanghai.myqcloud.com/20251009220907e515596b-Scene-001.mp4
+                            - http://scene-detect-1367161383.cos.ap-shanghai.myqcloud.com/20251009220907e515596b-Scene-002.mp4
+                    message: Success
+info:
+    description: Split videos based on video scenes, can accurately split videos into multiple video clips according to video shots (or transitions)
+    title: Intelligent Video Scene Segmentation
+    version: v1
+openapi: 3.0.1
+paths:
+    /scene-split:
+        post:
+            operationId: SceneSplit
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            properties:
+                                apiKey:
+                                    description: Get apiKey from the official website, contact customer service for free technical support
+                                    type: string
+                                threshold:
+                                    default: 27
+                                    description: Video splitting sensitivity, value range:(0, 255), common value:(20, 30), below 20 is highly sensitive, above 50 is very "dull"
+                                    type: integer
+                                video_url:
+                                    description: Video URL
+                                    type: string
+                            required:
+                                - apiKey
+                                - video_url
+                            type: object
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                properties:
+                                    code:
+                                        type: number
+                                    data:
+                                        properties:
+                                            scene_list:
+                                                items:
+                                                    type: string
+                                                type: array
+                                        type: object
+                                    message:
+                                        type: string
+                                type: object
+                    description: new desc
+                default:
+                    description: ""
+            summary: Accurately split videos based on video scenes, requires apiKey, charged based on video duration, 0.01 yuan/second, contact customer service for free technical support.
+servers:
+    - url: https://scene-detect.jcaigc.cn/openapi/v1/video

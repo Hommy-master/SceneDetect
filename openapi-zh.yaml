@@ -1,0 +1,67 @@
+components:
+    examples:
+        SceneSplit:
+            value:
+                ReqExample:
+                    apiKey: 864f0771-4c13-49ef-a4c0-dfc2203e5883
+                    threshold: 27
+                    video_url: https://t.jcaigc.cn/scenedetect.mp4
+                RespExample:
+                    code: 0
+                    data:
+                        scene_list:
+                            - http://scene-detect-1367161383.cos.ap-shanghai.myqcloud.com/20251009220907e515596b-Scene-001.mp4
+                            - http://scene-detect-1367161383.cos.ap-shanghai.myqcloud.com/20251009220907e515596b-Scene-002.mp4
+                    message: 成功
+info:
+    description: 根据视频镜头切分视频，可以根据视频镜头（或转场）将视频精准切分为多个视频片段
+    title: 视频镜头智能分割
+    version: v1
+openapi: 3.0.1
+paths:
+    /scene-split:
+        post:
+            operationId: SceneSplit
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            properties:
+                                apiKey:
+                                    description: 从官网获取apiKey，联系客服，可以免费获取技术支持
+                                    type: string
+                                threshold:
+                                    default: 27
+                                    description: 视频分割灵敏度，取值：(0, 255)，通用取值：(20, 30)，低于20高灵敏，高于50很"钝"
+                                    type: integer
+                                video_url:
+                                    description: 视频URL
+                                    type: string
+                            required:
+                                - apiKey
+                                - video_url
+                            type: object
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                properties:
+                                    code:
+                                        type: number
+                                    data:
+                                        properties:
+                                            scene_list:
+                                                items:
+                                                    type: string
+                                                type: array
+                                        type: object
+                                    message:
+                                        type: string
+                                type: object
+                    description: new desc
+                default:
+                    description: ""
+            summary: 根据视频镜头精准切分视频，需要apiKey，根据视频时长收费，0.01元/秒，联系客服可以免费获取技术支持。
+servers:
+    - url: https://scene-detect.jcaigc.cn/openapi/v1/video
