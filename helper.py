@@ -230,15 +230,16 @@ def get_video_duration(file_path: str) -> int:
         raise CustomException(CustomError.INTERNAL_SERVER_ERROR, "FFprobe tool not available")
 
 
-def cos_upload_file(file_path: str) -> str:
+def cos_upload_file(file_path: str, expire_days: int = 1) -> str:
     """
-    上传文件到OSS
+    上传文件到COS，返回带签名的临时URL，文件会在指定天数后自动过期
     
     Args:
         file_path: 文件路径
+        expire_days: URL有效期天数，默认1天
 
     Returns:
-        str: 对象URL
+        str: 带签名的临时下载URL（有效期为expire_days天）
     
     Raises:
         CustomException: 上传失败
@@ -246,17 +247,36 @@ def cos_upload_file(file_path: str) -> str:
     cfg = CosConfig(Region=config.COS_REGION, SecretId=config.COS_SECRET_ID, SecretKey=config.COS_SECRET_KEY, Token=None)
     cli = CosS3Client(cfg)
     try:
-        # 1. 上传文件
-        key = os.path.basename(file_path)
+        # 1. 生成带日期和小时的目录路径（格式：2025-10-15/22/文件名）
+        now = datetime.datetime.now()
+        current_date = now.strftime("%Y-%m-%d")
+        current_hour = now.strftime("%H")  # 小时，取值0-23
+        filename = os.path.basename(file_path)
+        key = f"{current_date}/{current_hour}/{filename}"
+        
+        # 2. 上传文件，并设置1天后自动删除
+        # 计算过期时间（当前时间 + expire_days天）
+        expire_time = datetime.datetime.now() + datetime.timedelta(days=expire_days)
+        expire_time_str = expire_time.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        
         response = cli.put_object_from_local_file(
             Bucket=config.COS_BUCKET_NAME, 
             LocalFilePath=file_path,
-            Key=key       
+            Key=key
         )
-        logger.info(f"COS upload success, response: {response}")
-        # 2. 拼公开下载地址
-        public_url = f'http://{config.COS_BUCKET_NAME}.cos.{config.COS_REGION}.myqcloud.com/{key}'
-        return public_url
+        logger.info(f"COS upload success, key: {key}, expire time: {expire_time_str}, response: {response}")
+        
+        # 3. 生成带签名的临时下载URL（有效期为expire_days天）
+        signed_url = cli.get_presigned_url(
+            Method='GET',
+            Bucket=config.COS_BUCKET_NAME,
+            Key=key,
+            Expired=expire_days * 24 * 3600  # 转换为秒数
+        )
+        
+        logger.info(f"Generated signed URL valid for {expire_days} day(s), URL: {signed_url[:100]}...")
+        return signed_url
+        
     except Exception as e:
         logger.error(f"COS upload failed: {e}")
         raise CustomException(CustomError.INTERNAL_SERVER_ERROR, "COS upload failed")
