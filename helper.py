@@ -28,7 +28,7 @@ CHUNK_READ_TIMEOUT = 10  # 每个块的读取超时10秒，快速检测网络中
 CONNECTION_RETRY_DELAY = 1  # 连接重试间隔时间（秒）
 MAX_RETRY_DELAY = 8  # 最大重试等待时间8秒，控制总时间
 MIN_PARTIAL_SIZE = 1024  # 最小部分下载大小（字节），小于此尺寸不使用断点续传
-USER_API_BASE_URL = "https://user.jcaigc.cn/openapi/user/v1"
+POINTS_API_BASE_URL = "https://jcaigc.cn/openapi/v1/user/points"
 
 # 网络质量评估阈值
 NETWORK_GOOD_THRESHOLD = 0.5  # 0.5秒内响应认为网络良好
@@ -110,7 +110,7 @@ def get_user_points(api_key: str) -> float:
     try:
         # 调用获取积分API
         params = {'apiKey': api_key}
-        result = _call_user_api('GET', '/points', params=params)
+        result = _call_user_api('GET', '', params=params)
         
         # 检查响应码并处理结果
         code = result.get('code', -1)
@@ -155,7 +155,7 @@ def deduct_user_points(api_key: str, points: float, desc: str) -> bool:
             'desc': desc.strip()
         }
         
-        result = _call_user_api('POST', '/points/deduct', json_data=json_data)
+        result = _call_user_api('POST', '/deduct', json_data=json_data)
         code = result.get('code', -1)
         
         if code == 0:
@@ -652,7 +652,7 @@ def _call_user_api(method: str, endpoint: str, params: Optional[dict] = None, js
     Raises:
         CustomException: 当API调用失败或返回错误时
     """
-    url = f"{USER_API_BASE_URL}{endpoint}"
+    url = f"{POINTS_API_BASE_URL}{endpoint}"
     
     try:
         logger.info(f"Calling user API: {method} {url}")
