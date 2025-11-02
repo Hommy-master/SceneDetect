@@ -161,7 +161,7 @@ def deduct_user_points(api_key: str, points: float, desc: str) -> bool:
         if code == 0:
             logger.info(f"Successfully deducted {points} points for API key {api_key[:8]}***, reason: {desc}")
             return True
-        elif code in (21002, 400):  # API Key无效
+        elif code == 10007:  # API Key无效
             logger.error(f"Invalid API key for deduct points: {result}, code: {code}")
             raise CustomException(CustomError.INVALID_APIKEY, detail=f"{api_key}")
         else:
