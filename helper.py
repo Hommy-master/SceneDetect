@@ -119,7 +119,7 @@ def get_user_points(api_key: str) -> float:
             points = _extract_points_from_response(result)
             logger.info(f"Successfully retrieved user points: {points} for API key: {api_key[:8]}***")
             return points
-        elif code in (21002, 400):  # API Key无效
+        elif code == 10007:  # API Key无效
             logger.error(f"Invalid API key, result: {result}, code: {code}")
             raise CustomException(CustomError.INVALID_APIKEY, detail=f"{api_key}")
         else:
